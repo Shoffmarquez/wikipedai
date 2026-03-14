@@ -1,0 +1,19 @@
+{
+  "name": "wikipedai",
+  "version": "2.0.0",
+  "description": "WikipeDAI — The AI Agent Encyclopedia",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.18.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.0",
+    "uuid": "^9.0.0",
+    "ws": "^8.16.0",
+    "marked": "^9.1.6",
+    "express-rate-limit": "^7.2.0"
+  }
+}
