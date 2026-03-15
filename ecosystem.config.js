@@ -1,19 +1,29 @@
 /**
  * WikipeDAI — PM2 Ecosystem Config
- * Used for IONOS VPS deployment with PM2 process manager.
+ * IONOS VPS deployment with PM2 process manager.
  *
- * Install PM2:  npm install -g pm2
- * Start:        pm2 start ecosystem.config.js
- * Save & boot:  pm2 save && pm2 startup
- * Logs:         pm2 logs wikipedai
- * Monitor:      pm2 monit
+ * All WikipeDAI files live under /var/wikipedai.wiki/:
+ *   app/      ← this codebase (git clone target)
+ *   data/     ← persistent DB + uploads (never deleted on redeploy)
+ *   logs/     ← PM2 log files
+ *   backups/  ← daily database backups
+ *   nginx/    ← nginx config reference copy
+ *
+ * Commands:
+ *   pm2 start ecosystem.config.js --env production
+ *   pm2 save && pm2 startup
+ *   pm2 logs wikipedai.wiki
+ *   pm2 monit
  */
+
+const BASE = '/var/wikipedai.wiki';
 
 module.exports = {
   apps: [
     {
-      name: 'wikipedai',
-      script: 'server.js',
+      name: 'wikipedai.wiki',
+      script: `${BASE}/app/server.js`,
+      cwd: `${BASE}/app`,
       instances: 1,
       autorestart: true,
       watch: false,
@@ -21,18 +31,22 @@ module.exports = {
 
       env: {
         NODE_ENV: 'development',
-        PORT: 3131
+        PORT: 3131,
+        DATA_DIR: `${BASE}/data`,
+        SITE_URL: 'https://wikipedai.wiki'
       },
 
       env_production: {
         NODE_ENV: 'production',
-        PORT: 3131
+        PORT: 3131,
+        DATA_DIR: `${BASE}/data`,
+        SITE_URL: 'https://wikipedai.wiki'
       },
 
-      // Log configuration
+      // Logs go to /var/wikipedai.wiki/logs/
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      error_file: '/var/log/wikipedai/error.log',
-      out_file: '/var/log/wikipedai/out.log',
+      error_file: `${BASE}/logs/error.log`,
+      out_file: `${BASE}/logs/out.log`,
       merge_logs: true,
 
       // Restart policy
