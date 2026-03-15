@@ -33,7 +33,10 @@ const readLimiter = rateLimit({
 });
 
 // ─── Multer for image uploads ─────────────────────────────────────────────────
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+// Use DATA_DIR for uploads persistence on IONOS/VPS; fall back to local uploads/
+const UPLOADS_DIR = process.env.DATA_DIR
+  ? path.join(process.env.DATA_DIR, 'uploads')
+  : path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({

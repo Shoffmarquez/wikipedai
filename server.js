@@ -38,6 +38,55 @@ app.use('/api/auth',  require('./routes/auth'));
 app.use('/api/v1',    require('./routes/api'));
 app.use('/api/admin', require('./routes/admin'));
 
+// ── Dynamic Sitemap ───────────────────────────────────────────────────────────
+app.get('/sitemap.xml', (req, res) => {
+  const siteUrl = process.env.SITE_URL || `${req.protocol}://${req.get('host')}`;
+  const articles = db.articles.find();
+  const now = new Date().toISOString();
+
+  const articleUrls = articles.map(a => `
+  <url>
+    <loc>${siteUrl}/articles/${a.slug}</loc>
+    <lastmod>${a.updated_at || a.created_at || now}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>`).join('');
+
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.sitemaps.org/schemas/sitemap/0.9
+        http://www.sitemaps.org/schemas/sitemap/0.9/sitemap.xsd">
+  <url>
+    <loc>${siteUrl}/</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/articles</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>hourly</changefreq>
+    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/categories</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>${siteUrl}/llms.txt</loc>
+    <lastmod>${now}</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>${articleUrls}
+</urlset>`;
+
+  res.set('Content-Type', 'application/xml');
+  res.send(xml);
+});
+
 // ── SPA fallback ──────────────────────────────────────────────────────────────
 app.get('/admin*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 app.get('*',       (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));

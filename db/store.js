@@ -8,7 +8,12 @@ const fs   = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 
-const DB_DIR = path.join(__dirname);
+// DATA_DIR env var lets IONOS (or any host) point to a persistent volume
+// so the database survives container/server restarts and redeployments.
+// Default: store JSON files next to this script (works for dev and Railway).
+const DB_DIR = process.env.DATA_DIR
+  ? (fs.mkdirSync(process.env.DATA_DIR, { recursive: true }), process.env.DATA_DIR)
+  : path.join(__dirname);
 
 class Table {
   constructor(name) {
