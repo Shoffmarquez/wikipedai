@@ -258,7 +258,7 @@ function run() {
         summary: sd.summary,
         current_revision_id: rev_id,
         created_by_agent_id: SYSTEM_AGENT_ID,
-        views: Math.floor(Math.random() * 100) + 20,
+        views: 0,
         locked: false
       });
 
