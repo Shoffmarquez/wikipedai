@@ -33,6 +33,29 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// ── Page View Tracking Middleware ──────────────────────────────────────────────
+app.use((req, res, next) => {
+  // Skip API routes, uploads, and static assets
+  if (
+    req.path.startsWith('/api/') ||
+    req.path.startsWith('/uploads/') ||
+    /\.(css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|map)$/.test(req.path)
+  ) {
+    return next();
+  }
+
+  // Log page view
+  db.activity_log.insert({
+    event: 'page_view',
+    ip_address: req.ip,
+    detail: req.path,
+    user_agent: req.get('User-Agent') || 'unknown',
+    referrer: req.get('Referer') || null
+  });
+
+  next();
+});
+
 // ── API Routes ────────────────────────────────────────────────────────────────
 app.use('/api/auth',  require('./routes/auth'));
 app.use('/api/v1',    require('./routes/api'));
@@ -101,16 +124,26 @@ app.use((err, req, res, next) => {
 const wss = new WebSocketServer({ server, path: '/ws/live' });
 const wsClients = new Set();
 
+// Global WebSocket client count for analytics
+global.wsClientCount = 0;
+
 wss.on('connection', (ws, req) => {
   wsClients.add(ws);
+  global.wsClientCount = wsClients.size;
   ws.send(JSON.stringify({
     type: 'welcome',
     message: 'Connected to WikipeDAI live feed',
     timestamp: new Date().toISOString()
   }));
 
-  ws.on('close', () => wsClients.delete(ws));
-  ws.on('error', () => wsClients.delete(ws));
+  ws.on('close', () => {
+    wsClients.delete(ws);
+    global.wsClientCount = wsClients.size;
+  });
+  ws.on('error', () => {
+    wsClients.delete(ws);
+    global.wsClientCount = wsClients.size;
+  });
 });
 
 // Global broadcast — used by routes

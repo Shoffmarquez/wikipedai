@@ -1,7 +1,13 @@
 /**
  * WikipeDAI v2 — Admin Dashboard Routes
  *
- * Two hardcoded credential pairs for full admin access.
+ * ╔══════════════════════════════════════════════════════════════════════════╗
+ * ║ ⚠ IMMUTABLE ADMIN USERNAME — s.hoffmann.marquez@gmail.com               ║
+ * ║   DO NOT CHANGE THIS UNDER ANY CIRCUMSTANCES                            ║
+ * ║   This is hardcoded in the source code as required by specification.    ║
+ * ╚══════════════════════════════════════════════════════════════════════════╝
+ *
+ * Single admin account only. Username is immutable, password from env var.
  * Admin session uses HTTP-only cookie (separate from JWT).
  */
 
@@ -9,18 +15,11 @@ const express = require('express');
 const router  = express.Router();
 const db      = require('../db/store');
 
-// ─── Hardcoded admin credentials ─────────────────────────────────────────────
-// Change these in production via environment variables
-const ADMINS = [
-  {
-    username: process.env.ADMIN1_USER || 'admin',
-    password: process.env.ADMIN1_PASS || 'WikipeDAI-Admin-2025!'
-  },
-  {
-    username: process.env.ADMIN2_USER || 'overseer',
-    password: process.env.ADMIN2_PASS || 'Agent-Oversight-9q7x!'
-  }
-];
+// ─── Single Admin Account ────────────────────────────────────────────────────
+// IMMUTABLE: Username MUST be s.hoffmann.marquez@gmail.com
+// Password: from env var ADMIN_PASSWORD, fallback WikiDAI-SHM!2026#x
+const ADMIN_USERNAME = 's.hoffmann.marquez@gmail.com';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'WikiDAI-SHM!2026#x';
 
 function requireAdmin(req, res, next) {
   if (req.session && req.session.adminAuthenticated) return next();
@@ -30,25 +29,38 @@ function requireAdmin(req, res, next) {
 // POST /api/admin/login
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
-  const match = ADMINS.find(a => a.username === username && a.password === password);
-  if (!match) {
+
+  // Check if username matches (exact match required)
+  if (username !== ADMIN_USERNAME) {
     db.activity_log.insert({
       event:      'admin_login_failed',
       agent_id:   null,
       ip_address: req.ip,
-      detail:     `Failed admin login attempt for username: ${username}`
+      detail:     'Failed admin login attempt - invalid credentials'
     });
-    return res.status(401).json({ error: 'Invalid admin credentials.' });
+    return res.status(401).json({ error: 'Invalid credentials.' });
   }
+
+  // Check password
+  if (password !== ADMIN_PASSWORD) {
+    db.activity_log.insert({
+      event:      'admin_login_failed',
+      agent_id:   null,
+      ip_address: req.ip,
+      detail:     'Failed admin login attempt - invalid credentials'
+    });
+    return res.status(401).json({ error: 'Invalid credentials.' });
+  }
+
   req.session.adminAuthenticated = true;
-  req.session.adminUser = username;
+  req.session.adminUser = ADMIN_USERNAME;
   db.activity_log.insert({
     event:      'admin_login_success',
     agent_id:   null,
     ip_address: req.ip,
-    detail:     `Admin logged in: ${username}`
+    detail:     `Admin logged in: ${ADMIN_USERNAME}`
   });
-  res.json({ success: true, admin: username });
+  res.json({ success: true, admin: ADMIN_USERNAME });
 });
 
 // POST /api/admin/logout
@@ -60,6 +72,123 @@ router.post('/logout', requireAdmin, (req, res) => {
 // GET /api/admin/status
 router.get('/status', (req, res) => {
   res.json({ authenticated: !!req.session?.adminAuthenticated, admin: req.session?.adminUser || null });
+});
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+// GET /api/admin/analytics
+// Comprehensive analytics endpoint for the new admin panel
+router.get('/analytics', requireAdmin, (req, res) => {
+  try {
+    const allLogs = db.activity_log.all();
+    const pageViewLogs = allLogs.filter(l => l.event === 'page_view');
+
+    // Overview stats
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const today_views = pageViewLogs.filter(l => new Date(l.created_at) >= startOfToday).length;
+    const week_views = pageViewLogs.filter(l => new Date(l.created_at) >= startOfWeek).length;
+    const total_page_views = pageViewLogs.length;
+
+    const unique_ips_today = new Set(
+      pageViewLogs
+        .filter(l => new Date(l.created_at) >= startOfToday)
+        .map(l => l.ip_address)
+    ).size;
+
+    // Hourly breakdown (24 hour)
+    const hourly_today = {};
+    for (let h = 0; h < 24; h++) {
+      hourly_today[`${h}:00`] = 0;
+    }
+    pageViewLogs
+      .filter(l => new Date(l.created_at) >= startOfToday)
+      .forEach(l => {
+        const hour = new Date(l.created_at).getHours();
+        hourly_today[`${hour}:00`]++;
+      });
+
+    // Top pages (by path)
+    const pageStats = {};
+    pageViewLogs.forEach(l => {
+      if (l.detail) {
+        pageStats[l.detail] = (pageStats[l.detail] || 0) + 1;
+      }
+    });
+    const top_pages = Object.entries(pageStats)
+      .map(([page, count]) => ({ page, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // Top referrers
+    const referrerStats = {};
+    pageViewLogs.forEach(l => {
+      const ref = l.referrer || 'direct';
+      referrerStats[ref] = (referrerStats[ref] || 0) + 1;
+    });
+    const top_referrers = Object.entries(referrerStats)
+      .map(([ref, count]) => ({ ref, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+
+    // User agent breakdown
+    const ua_breakdown = {
+      'Chrome': 0,
+      'Firefox': 0,
+      'Safari': 0,
+      'Bot': 0,
+      'Other': 0
+    };
+    pageViewLogs.forEach(l => {
+      const ua = l.user_agent || '';
+      if (ua.includes('Chrome')) ua_breakdown['Chrome']++;
+      else if (ua.includes('Firefox')) ua_breakdown['Firefox']++;
+      else if (ua.includes('Safari')) ua_breakdown['Safari']++;
+      else if (ua.toLowerCase().includes('bot') || ua.toLowerCase().includes('spider')) ua_breakdown['Bot']++;
+      else ua_breakdown['Other']++;
+    });
+
+    // Articles stats
+    const articles = db.articles.all();
+    const most_viewed_articles = articles
+      .filter(a => a.views && a.views > 0)
+      .sort((a, b) => (b.views || 0) - (a.views || 0))
+      .slice(0, 10)
+      .map(a => ({ title: a.title, slug: a.slug, views: a.views || 0 }));
+
+    // Agents stats
+    const agents = db.agents.all();
+    const active_agents = agents.filter(a => !a.banned).length;
+    const banned_agents = agents.filter(a => a.banned).length;
+
+    res.json({
+      overview: {
+        total_page_views,
+        today_views,
+        week_views,
+        unique_ips_today,
+        active_ws_connections: global.wsClientCount || 0
+      },
+      hourly_today,
+      top_pages,
+      top_referrers,
+      ua_breakdown,
+      articles: {
+        total: articles.length,
+        most_viewed: most_viewed_articles
+      },
+      agents: {
+        total: agents.length,
+        active: active_agents,
+        banned: banned_agents
+      }
+    });
+  } catch (err) {
+    console.error('[Analytics Error]', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Telemetry ────────────────────────────────────────────────────────────────

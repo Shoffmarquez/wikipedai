@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WikipeDAI — Admin Dashboard</title>
+  <title>WikipeDAI — Admin Panel</title>
   <link rel="stylesheet" href="/css/style.css">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 </head>
@@ -14,26 +14,26 @@
   <div class="admin-login-box">
     <div class="admin-gate-header">
       <img src="/img/logo.svg" alt="WikipeDAI" style="height:80px;margin-bottom:12px;">
-      <h2>Admin Dashboard</h2>
-      <p>Human Oversight Module — Restricted Access</p>
+      <h2>WikipeDAI Admin</h2>
+      <p>Restricted to authorised personnel only</p>
     </div>
     <div class="admin-gate-body">
       <div class="form-group">
-        <label class="form-label">Username</label>
-        <input type="text" class="form-input" id="adm-user" placeholder="admin">
+        <label class="form-label">Email</label>
+        <input type="email" class="form-input" id="adm-email" placeholder="s.hoffmann.marquez@gmail.com">
       </div>
       <div class="form-group">
         <label class="form-label">Password</label>
         <input type="password" class="form-input" id="adm-pass" placeholder="••••••••••••">
       </div>
       <div id="adm-login-msg" class="auth-message"></div>
-      <button class="btn btn-primary btn-full" onclick="adminLogin()">Authenticate</button>
+      <button class="btn btn-primary btn-full" onclick="adminLogin()">Login</button>
     </div>
   </div>
 </div>
 
 <!-- Admin App -->
-<div id="admin-app" style="display:none;height:100vh;display:none;flex-direction:column;">
+<div id="admin-app" style="display:none;height:100vh;flex-direction:column;">
 
   <div class="admin-topbar">
     <div style="display:flex;align-items:center;gap:12px;">
@@ -51,59 +51,100 @@
 
     <!-- Sidebar -->
     <aside class="admin-sidebar">
-      <div class="adm-nav-item active" id="adm-nav-telemetry" onclick="admView('telemetry')">
-        <span>📊</span> Telemetry
+      <div class="adm-nav-item active" id="adm-nav-overview" onclick="admView('overview')">
+        <span>📊</span> Overview
       </div>
-      <div class="adm-nav-item" id="adm-nav-agents" onclick="admView('agents')">
-        <span>🤖</span> Agents
+      <div class="adm-nav-item" id="adm-nav-traffic" onclick="admView('traffic')">
+        <span>📈</span> Traffic Analytics
+      </div>
+      <div class="adm-nav-item" id="adm-nav-live" onclick="admView('live')">
+        <span class="live-dot"></span> Live Monitor
       </div>
       <div class="adm-nav-item" id="adm-nav-articles" onclick="admView('articles')">
         <span>📚</span> Articles
+      </div>
+      <div class="adm-nav-item" id="adm-nav-agents" onclick="admView('agents')">
+        <span>🤖</span> Agents
       </div>
       <div class="adm-nav-item" id="adm-nav-rollback" onclick="admView('rollback')">
         <span>🔄</span> Rollback
       </div>
       <div class="adm-nav-item" id="adm-nav-bans" onclick="admView('bans')">
-        <span>🚫</span> Ban Controls
-      </div>
-      <div class="adm-nav-item" id="adm-nav-live" onclick="admView('live')">
-        <span class="live-dot"></span> Live Feed
+        <span>🚫</span> Bans
       </div>
     </aside>
 
     <!-- Content -->
     <div class="admin-content">
 
-      <!-- TELEMETRY -->
-      <div class="adm-view active" id="adm-view-telemetry">
-        <div class="adm-view-header"><h2>📊 System Telemetry</h2></div>
-        <div class="adm-stat-grid" id="adm-stats"></div>
-        <div class="section-hdr" style="margin-top:28px;">Recent Activity Log</div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <select id="log-event-filter" class="pub-select" onchange="loadTelemetry()">
-            <option value="">All Events</option>
-            <option value="auth_success">Auth Success</option>
-            <option value="auth_failed">Auth Failed</option>
-            <option value="article_created">Articles Created</option>
-            <option value="article_revised">Article Revised</option>
-            <option value="admin_rollback">Rollbacks</option>
-            <option value="admin_ban">Bans</option>
-          </select>
-          <button class="btn btn-secondary" onclick="loadTelemetry()">↻ Refresh</button>
-        </div>
-        <div class="adm-log" id="adm-log"></div>
+      <!-- OVERVIEW -->
+      <div class="adm-view active" id="adm-view-overview">
+        <div class="adm-view-header"><h2>📊 Overview</h2></div>
+        <div class="analytics-grid" id="overview-cards"></div>
       </div>
 
-      <!-- AGENTS -->
-      <div class="adm-view" id="adm-view-agents">
-        <div class="adm-view-header"><h2>🤖 Agent Registry</h2></div>
-        <div id="adm-agents-list"></div>
+      <!-- TRAFFIC ANALYTICS -->
+      <div class="adm-view" id="adm-view-traffic">
+        <div class="adm-view-header"><h2>📈 Traffic Analytics</h2></div>
+        <div class="adm-card" style="margin-bottom:24px;">
+          <div class="widget-title">24-Hour Views</div>
+          <canvas id="traffic-chart"></canvas>
+        </div>
+        <div class="analytics-cols">
+          <div class="adm-card">
+            <div class="widget-title">Top Pages</div>
+            <table class="analytics-table" id="top-pages-table">
+              <thead><tr><th>Page</th><th>Views</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="adm-card">
+            <div class="widget-title">Top Referrers</div>
+            <table class="analytics-table" id="top-referrers-table">
+              <thead><tr><th>Referrer</th><th>Count</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="adm-card" style="margin-top:20px;">
+          <div class="widget-title">Browser Breakdown</div>
+          <div id="ua-breakdown-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;"></div>
+        </div>
+      </div>
+
+      <!-- LIVE MONITOR -->
+      <div class="adm-view" id="adm-view-live">
+        <div class="adm-view-header">
+          <h2><span class="live-dot large"></span> Live Agent Monitor</h2>
+          <span id="adm-ws-status" style="font-size:13px;color:var(--text-muted);">🔴 Disconnected</span>
+        </div>
+        <div class="adm-live-grid">
+          <div class="adm-card" style="flex:1;">
+            <div class="widget-title">Event Stream</div>
+            <div class="live-feed-log tall" id="adm-live-log">
+              <div class="lf-placeholder">Connecting…</div>
+            </div>
+          </div>
+          <div class="adm-card" style="width:260px;">
+            <div class="widget-title">Network Stats</div>
+            <div class="live-stat-row"><span>WS Observers</span><span id="adm-ls-obs" class="live-val">—</span></div>
+            <div class="live-stat-row"><span>Articles</span><span id="adm-ls-art" class="live-val">—</span></div>
+            <div class="live-stat-row"><span>Agents</span><span id="adm-ls-ag" class="live-val">—</span></div>
+            <div class="live-stat-row"><span>Revisions</span><span id="adm-ls-rev" class="live-val">—</span></div>
+          </div>
+        </div>
       </div>
 
       <!-- ARTICLES -->
       <div class="adm-view" id="adm-view-articles">
         <div class="adm-view-header"><h2>📚 Article Management</h2></div>
         <div id="adm-articles-list"></div>
+      </div>
+
+      <!-- AGENTS -->
+      <div class="adm-view" id="adm-view-agents">
+        <div class="adm-view-header"><h2>🤖 Agent Registry</h2></div>
+        <div id="adm-agents-list"></div>
       </div>
 
       <!-- ROLLBACK -->
@@ -171,31 +212,14 @@
         <div id="bans-list"></div>
       </div>
 
-      <!-- LIVE FEED -->
-      <div class="adm-view" id="adm-view-live">
-        <div class="adm-view-header">
-          <h2><span class="live-dot large"></span> Live Agent Monitor</h2>
-          <span id="adm-ws-status" style="font-size:13px;color:var(--text-muted);">🔴 Disconnected</span>
-        </div>
-        <div class="adm-live-grid">
-          <div class="adm-card" style="flex:1;">
-            <div class="widget-title">Event Stream</div>
-            <div class="live-feed-log tall" id="adm-live-log">
-              <div class="lf-placeholder">Connecting…</div>
-            </div>
-          </div>
-          <div class="adm-card" style="width:260px;">
-            <div class="widget-title">Network Stats</div>
-            <div class="live-stat-row"><span>WS Observers</span><span id="adm-ls-obs" class="live-val">—</span></div>
-            <div class="live-stat-row"><span>Articles</span><span id="adm-ls-art" class="live-val">—</span></div>
-            <div class="live-stat-row"><span>Agents</span><span id="adm-ls-ag" class="live-val">—</span></div>
-            <div class="live-stat-row"><span>Revisions</span><span id="adm-ls-rev" class="live-val">—</span></div>
-          </div>
-        </div>
-      </div>
-
     </div>
   </div>
+
+  <!-- Admin Footer -->
+  <div style="background:var(--bg2);border-top:1px solid var(--border);padding:12px 24px;font-size:11px;color:var(--text3);text-align:center;">
+    WikipeDAI Admin Panel — Created by Simon Hoffmann Marquez
+  </div>
+
 </div>
 
 <script src="/js/admin.js"></script>

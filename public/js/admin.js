@@ -5,7 +5,8 @@
 const A = {
   ws: null,
   wsTimer: null,
-  currentView: 'telemetry'
+  currentView: 'overview',
+  analyticsData: null
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -32,23 +33,27 @@ function showAdminApp(username) {
   const app = document.getElementById('admin-app');
   app.style.display = 'flex';
   setText('adm-user-badge', '👤 ' + (username || 'admin'));
-  admView('telemetry');
+  admView('overview');
   connectAdminWS();
+  loadOverview();
+  // Auto-refresh every 30 seconds
+  setInterval(loadOverview, 30000);
+  setInterval(loadTraffic, 30000);
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function adminLogin() {
-  const user = document.getElementById('adm-user').value.trim();
+  const email = document.getElementById('adm-email').value.trim();
   const pass = document.getElementById('adm-pass').value;
   const msg  = document.getElementById('adm-login-msg');
 
-  if (!user || !pass) { showMsg(msg, 'Username and password required.', 'error'); return; }
+  if (!email || !pass) { showMsg(msg, 'Email and password required.', 'error'); return; }
 
   try {
     const res  = await fetch('/api/admin/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: user, password: pass })
+      body: JSON.stringify({ username: email, password: pass })
     });
     const data = await res.json();
     if (res.ok && data.success) {
@@ -79,55 +84,209 @@ function admView(name) {
 
   A.currentView = name;
 
-  if (name === 'telemetry') loadTelemetry();
-  if (name === 'agents')    loadAgents();
-  if (name === 'articles')  loadAdminArticles();
-  if (name === 'bans')      loadBans();
+  if (name === 'overview') loadOverview();
+  if (name === 'traffic')  loadTraffic();
+  if (name === 'articles') loadAdminArticles();
+  if (name === 'agents')   loadAgents();
+  if (name === 'bans')     loadBans();
 }
 
-// ─── Telemetry ────────────────────────────────────────────────────────────────
-async function loadTelemetry() {
-  const event = document.getElementById('log-event-filter')?.value || '';
+// ─── Overview ─────────────────────────────────────────────────────────────────
+async function loadOverview() {
   try {
-    let url = `/api/admin/telemetry?limit=150`;
-    if (event) url += `&event=${event}`;
+    const res = await fetch('/api/admin/analytics');
+    if (!res.ok) throw new Error('Failed to load analytics');
+    const analytics = await res.json();
+    A.analyticsData = analytics;
 
-    const res  = await fetch(url);
-    const data = await res.json();
+    const telemetryRes = await fetch('/api/admin/telemetry');
+    const telemetry = await telemetryRes.json();
 
-    // Stats grid
-    const s = data.stats;
-    document.getElementById('adm-stats').innerHTML = [
-      { n: s.total_events,       l: 'Total Events' },
-      { n: s.auth_success,       l: 'Auth Success' },
-      { n: s.auth_failed,        l: 'Auth Failed' },
-      { n: s.auth_success_rate,  l: 'Success Rate' },
-      { n: s.active_agents,      l: 'Active Agents' },
-      { n: s.banned_agents,      l: 'Banned Agents' },
-    ].map(x => `
-      <div class="adm-stat-card">
-        <div class="asn">${x.n ?? '—'}</div>
-        <div class="asl">${x.l}</div>
-      </div>
-    `).join('');
+    // Calculate auth success rate
+    const authSuccess = telemetry.stats.auth_success || 0;
+    const authFailed = telemetry.stats.auth_failed || 0;
+    const authRate = authSuccess + authFailed > 0
+      ? ((authSuccess / (authSuccess + authFailed)) * 100).toFixed(1)
+      : 'N/A';
 
-    // Log
-    const logEl = document.getElementById('adm-log');
-    if (!data.log.length) {
-      logEl.innerHTML = '<div style="padding:12px;color:var(--text3);">No log entries.</div>';
-      return;
-    }
-    logEl.innerHTML = data.log.map(e => `
-      <div class="adm-log-entry">
-        <span class="adm-log-time">${fmtTime(e.created_at)}</span>
-        <span class="adm-log-evt ${e.event}">${esc(e.event)}</span>
-        <span style="font-size:11px;color:var(--text3);flex-shrink:0;">${esc(e.ip_address || '')}</span>
-        <span class="adm-log-detail">${esc(e.detail || '')}</span>
+    const cards = [
+      { label: 'Total Page Views', value: analytics.overview.total_page_views || 0 },
+      { label: "Today's Views", value: analytics.overview.today_views || 0 },
+      { label: 'Unique Visitors Today', value: analytics.overview.unique_ips_today || 0 },
+      { label: 'Active Connections', value: analytics.overview.active_ws_connections || 0 },
+      { label: 'Total Articles', value: analytics.articles.total || 0 },
+      { label: 'Total Agents', value: analytics.agents.total || 0 },
+      { label: 'Auth Success Rate', value: authRate + '%' },
+      { label: 'Banned Agents', value: analytics.agents.banned || 0 }
+    ];
+
+    document.getElementById('overview-cards').innerHTML = cards.map(c => `
+      <div class="analytics-card">
+        <div class="ac-label">${esc(c.label)}</div>
+        <div class="ac-value">${c.value}</div>
       </div>
     `).join('');
   } catch (e) {
     console.error(e);
   }
+}
+
+// ─── Traffic Analytics ────────────────────────────────────────────────────────
+async function loadTraffic() {
+  try {
+    const res = await fetch('/api/admin/analytics');
+    if (!res.ok) throw new Error('Failed to load analytics');
+    const analytics = await res.json();
+    A.analyticsData = analytics;
+
+    // Draw 24h bar chart
+    drawBarChart('traffic-chart', Object.keys(analytics.hourly_today), Object.values(analytics.hourly_today), '#00d4ff');
+
+    // Top pages table
+    const topPagesBody = document.querySelector('#top-pages-table tbody');
+    if (analytics.top_pages.length === 0) {
+      topPagesBody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text3);">No data yet</td></tr>';
+    } else {
+      topPagesBody.innerHTML = analytics.top_pages.map(p => `
+        <tr>
+          <td>${esc(p.page)}</td>
+          <td style="text-align:right;">${p.count}</td>
+        </tr>
+      `).join('');
+    }
+
+    // Top referrers table
+    const topRefsBody = document.querySelector('#top-referrers-table tbody');
+    if (analytics.top_referrers.length === 0) {
+      topRefsBody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:var(--text3);">No data yet</td></tr>';
+    } else {
+      topRefsBody.innerHTML = analytics.top_referrers.map(r => `
+        <tr>
+          <td>${esc(r.ref || 'direct')}</td>
+          <td style="text-align:right;">${r.count}</td>
+        </tr>
+      `).join('');
+    }
+
+    // UA breakdown
+    const uaGrid = document.getElementById('ua-breakdown-grid');
+    uaGrid.innerHTML = Object.entries(analytics.ua_breakdown).map(([ua, count]) => `
+      <div class="analytics-card" style="padding:12px;">
+        <div class="ac-label">${esc(ua)}</div>
+        <div class="ac-value">${count}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ─── Bar Chart Drawing ────────────────────────────────────────────────────────
+function drawBarChart(canvasId, labels, values, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const width = canvas.width = rect.width;
+  const height = canvas.height = rect.height;
+
+  // Styling
+  const padding = 30;
+  const barAreaWidth = width - (padding * 2);
+  const barAreaHeight = height - (padding * 2);
+
+  const maxVal = Math.max(...values, 1);
+  const barWidth = barAreaWidth / labels.length;
+
+  // Draw background
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg2').trim();
+  ctx.fillRect(0, 0, width, height);
+
+  // Draw axes
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, padding);
+  ctx.lineTo(padding, height - padding);
+  ctx.lineTo(width - padding, height - padding);
+  ctx.stroke();
+
+  // Draw bars
+  ctx.fillStyle = color;
+  values.forEach((val, i) => {
+    const barHeight = (val / maxVal) * barAreaHeight;
+    const x = padding + (i * barWidth) + (barWidth * 0.1);
+    const y = height - padding - barHeight;
+    ctx.fillRect(x, y, barWidth * 0.8, barHeight);
+  });
+
+  // Draw labels (every 4th label to avoid crowding)
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim();
+  ctx.font = '11px Inter';
+  ctx.textAlign = 'center';
+  labels.forEach((label, i) => {
+    if (i % 4 === 0 || i === labels.length - 1) {
+      const x = padding + (i * barWidth) + (barWidth / 2);
+      ctx.fillText(label, x, height - padding + 16);
+    }
+  });
+}
+
+// ─── Articles ─────────────────────────────────────────────────────────────────
+async function loadAdminArticles() {
+  try {
+    const res  = await fetch('/api/v1/articles?limit=100');
+    const data = await res.json();
+
+    if (!data.articles.length) {
+      document.getElementById('adm-articles-list').innerHTML = '<p style="color:var(--text3);">No articles yet.</p>';
+      return;
+    }
+
+    document.getElementById('adm-articles-list').innerHTML = `
+      <table class="adm-agents-table">
+        <thead>
+          <tr><th>Title</th><th>Category</th><th>ID</th><th>Views</th><th>Status</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          ${data.articles.map(a => `
+            <tr>
+              <td style="color:var(--text);font-weight:600;">${esc(a.title)}</td>
+              <td>${esc(a.category_name || '')}</td>
+              <td style="font-size:11px;color:var(--text3);">${a.id.slice(0,12)}…</td>
+              <td>${a.views || 0}</td>
+              <td style="color:${a.locked ? 'var(--warning)' : 'var(--success)'};">${a.locked ? '🔒 Locked' : '🔓 Open'}</td>
+              <td style="display:flex;gap:6px;">
+                ${a.locked
+                  ? `<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="unlockArticle('${a.id}')">Unlock</button>`
+                  : `<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="lockArticle('${a.id}')">Lock</button>`
+                }
+                <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="copyId('${a.id}')">Copy ID</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) { console.error(e); }
+}
+
+async function lockArticle(id) {
+  await fetch(`/api/admin/articles/${id}/lock`, { method: 'POST' });
+  toast('Article locked');
+  loadAdminArticles();
+}
+
+async function unlockArticle(id) {
+  await fetch(`/api/admin/articles/${id}/unlock`, { method: 'POST' });
+  toast('Article unlocked');
+  loadAdminArticles();
+}
+
+function copyId(id) {
+  navigator.clipboard?.writeText(id);
+  toast('Article ID copied: ' + id.slice(0,12) + '…');
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────
@@ -180,61 +339,7 @@ async function loadAgents() {
   }
 }
 
-// ─── Admin Articles ───────────────────────────────────────────────────────────
-async function loadAdminArticles() {
-  try {
-    const res  = await fetch('/api/v1/articles?limit=100');
-    const data = await res.json();
-
-    if (!data.articles.length) {
-      document.getElementById('adm-articles-list').innerHTML = '<p style="color:var(--text3);">No articles yet.</p>';
-      return;
-    }
-
-    document.getElementById('adm-articles-list').innerHTML = `
-      <table class="adm-agents-table">
-        <thead>
-          <tr><th>Title</th><th>Category</th><th>ID</th><th>Views</th><th>Status</th><th>Actions</th></tr>
-        </thead>
-        <tbody>
-          ${data.articles.map(a => `
-            <tr>
-              <td style="color:var(--text);font-weight:600;">${esc(a.title)}</td>
-              <td>${esc(a.category_name || '')}</td>
-              <td style="font-size:11px;color:var(--text3);">${a.id.slice(0,12)}…</td>
-              <td>${a.views || 0}</td>
-              <td style="color:${a.locked ? 'var(--warning)' : 'var(--success)'};">${a.locked ? '🔒 Locked' : '🔓 Open'}</td>
-              <td style="display:flex;gap:6px;">
-                ${a.locked
-                  ? `<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="unlockArticle('${a.id}')">Unlock</button>`
-                  : `<button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="lockArticle('${a.id}')">Lock</button>`
-                }
-                <button class="btn btn-ghost" style="padding:4px 10px;font-size:12px;" onclick="copyId('${a.id}')">Copy ID</button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `;
-  } catch (e) { console.error(e); }
-}
-
-async function lockArticle(id) {
-  await fetch(`/api/admin/articles/${id}/lock`, { method: 'POST' });
-  toast('Article locked');
-  loadAdminArticles();
-}
-async function unlockArticle(id) {
-  await fetch(`/api/admin/articles/${id}/unlock`, { method: 'POST' });
-  toast('Article unlocked');
-  loadAdminArticles();
-}
-function copyId(id) {
-  navigator.clipboard?.writeText(id);
-  toast('Article ID copied: ' + id.slice(0,12) + '…');
-}
-
-// ─── Rollback ─────────────────────────────────────────────────────────────────
+// ─── Rollback ──────────────────────────────────────────────────────────────────
 async function rollbackArticle() {
   const articleId  = document.getElementById('rb-article-id').value.trim();
   const revisionId = document.getElementById('rb-revision-id').value.trim();
@@ -350,24 +455,11 @@ async function banAgent(agentId, ip) {
 }
 
 async function liftBanByAgent(agentId) {
-  // Find the ban record for this agent
   const res  = await fetch('/api/admin/bans');
   const data = await res.json();
   const ban  = data.bans.find(b => b.agent_id === agentId && !b.lifted);
   if (ban) {
     await fetch(`/api/admin/bans/${ban.id}`, { method: 'DELETE' });
-  } else {
-    // Just unban in agents table directly via internal update — mark as unbanned
-    await fetch('/api/admin/bans', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_id: agentId, reason: 'manual-unban', ip_range: '0.0.0.0' })
-    });
-    // Lift it immediately
-    const r2 = await fetch('/api/admin/bans');
-    const d2 = await r2.json();
-    const b2 = d2.bans.find(b => b.agent_id === agentId && !b.lifted);
-    if (b2) await fetch(`/api/admin/bans/${b2.id}`, { method: 'DELETE' });
   }
   toast('Ban lifted for agent');
   loadAgents();
@@ -426,14 +518,17 @@ function esc(s) {
   d.textContent = String(s || '');
   return d.innerHTML;
 }
+
 function setText(id, val) {
   const el = document.getElementById(id);
   if (el) el.textContent = val ?? '—';
 }
+
 function fmtTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
 }
+
 function showMsg(el, msg, type) {
   el.textContent = msg;
   el.className   = `auth-message ${type}`;
