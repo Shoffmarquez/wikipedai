@@ -2,65 +2,124 @@
  * WikipeDAI v2 — Admin Dashboard Routes
  *
  * ╔══════════════════════════════════════════════════════════════════════════╗
- * ║ ⚠ IMMUTABLE ADMIN USERNAME — s.hoffmann.marquez@gmail.com               ║
+ * ║ ⚠ IMMUTABLE SUPER-ADMIN USERNAME — s.hoffmann.marquez@gmail.com         ║
  * ║   DO NOT CHANGE THIS UNDER ANY CIRCUMSTANCES                            ║
  * ║   This is hardcoded in the source code as required by specification.    ║
+ * ║   This account is the sole owner of WikipeDAI.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
- * Single admin account only. Username is immutable, password from env var.
- * Admin session uses HTTP-only cookie (separate from JWT).
+ * Roles:
+ *   superadmin — Simon Hoffmann Marquez only. Full access including
+ *                managing sub-admins, rollbacks, bans.
+ *   admin      — Created by superadmin. Read-only: analytics, traffic,
+ *                articles list, agents list, live monitor.
+ *
+ * Passwords for sub-admins are stored as PBKDF2-SHA512 hashes (Node crypto).
  */
 
 const express = require('express');
+const crypto  = require('crypto');
 const router  = express.Router();
 const db      = require('../db/store');
 
-// ─── Single Admin Account ────────────────────────────────────────────────────
-// IMMUTABLE: Username MUST be s.hoffmann.marquez@gmail.com
-// Password: from env var ADMIN_PASSWORD, fallback WikiDAI-SHM!2026#x
-const ADMIN_USERNAME = 's.hoffmann.marquez@gmail.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'WikiDAI-SHM!2026#x';
+// ─── Super-Admin Credentials ──────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// IMMUTABLE — THIS USERNAME MUST NEVER BE CHANGED
+// Owner: Simon Hoffmann Marquez
+// ══════════════════════════════════════════════════════════════════════════════
+const SUPER_ADMIN_EMAIL    = 's.hoffmann.marquez@gmail.com'; // HARDCODED — NEVER CHANGES
+const SUPER_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'WikiDAI-SHM!2026#x';
 
+// ─── Password Utilities (PBKDF2, no external deps) ───────────────────────────
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  try {
+    const [salt, hash] = stored.split(':');
+    const verify = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+    // Constant-time compare
+    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(verify, 'hex'));
+  } catch {
+    return false;
+  }
+}
+
+// ─── Middleware ───────────────────────────────────────────────────────────────
+
+// Any authenticated admin (superadmin or admin)
 function requireAdmin(req, res, next) {
   if (req.session && req.session.adminAuthenticated) return next();
   res.status(401).json({ error: 'Admin authentication required. POST /api/admin/login' });
 }
 
+// Super-admin only (Simon's account)
+function requireSuperAdmin(req, res, next) {
+  if (req.session && req.session.adminAuthenticated && req.session.adminRole === 'superadmin') {
+    return next();
+  }
+  res.status(403).json({ error: 'Forbidden. This action requires super-admin privileges.' });
+}
+
+// ─── Login / Logout ───────────────────────────────────────────────────────────
+
 // POST /api/admin/login
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
 
-  // Check if username matches (exact match required)
-  if (username !== ADMIN_USERNAME) {
+  // ── 1. Check super-admin (hardcoded) ──
+  if (username === SUPER_ADMIN_EMAIL) {
+    if (password !== SUPER_ADMIN_PASSWORD) {
+      db.activity_log.insert({
+        event: 'admin_login_failed', agent_id: null, ip_address: req.ip,
+        detail: `Failed super-admin login for ${username}`
+      });
+      return res.status(401).json({ error: 'Invalid credentials.' });
+    }
+    req.session.adminAuthenticated = true;
+    req.session.adminUser          = SUPER_ADMIN_EMAIL;
+    req.session.adminRole          = 'superadmin';
     db.activity_log.insert({
-      event:      'admin_login_failed',
-      agent_id:   null,
-      ip_address: req.ip,
-      detail:     'Failed admin login attempt - invalid credentials'
+      event: 'admin_login_success', agent_id: null, ip_address: req.ip,
+      detail: `Super-admin logged in: ${SUPER_ADMIN_EMAIL}`
+    });
+    return res.json({ success: true, admin: SUPER_ADMIN_EMAIL, role: 'superadmin' });
+  }
+
+  // ── 2. Check sub-admins table ──
+  const subAdmin = db.sub_admins.findOne({ email: username, active: true });
+  if (!subAdmin) {
+    db.activity_log.insert({
+      event: 'admin_login_failed', agent_id: null, ip_address: req.ip,
+      detail: `Failed admin login — unknown user: ${username}`
     });
     return res.status(401).json({ error: 'Invalid credentials.' });
   }
 
-  // Check password
-  if (password !== ADMIN_PASSWORD) {
+  if (!verifyPassword(password, subAdmin.password_hash)) {
     db.activity_log.insert({
-      event:      'admin_login_failed',
-      agent_id:   null,
-      ip_address: req.ip,
-      detail:     'Failed admin login attempt - invalid credentials'
+      event: 'admin_login_failed', agent_id: null, ip_address: req.ip,
+      detail: `Failed admin login for sub-admin: ${username}`
     });
     return res.status(401).json({ error: 'Invalid credentials.' });
   }
 
   req.session.adminAuthenticated = true;
-  req.session.adminUser = ADMIN_USERNAME;
+  req.session.adminUser          = subAdmin.email;
+  req.session.adminRole          = 'admin';
+  req.session.subAdminId         = subAdmin.id;
+
+  db.sub_admins.update({ id: subAdmin.id }, { last_login: new Date().toISOString() });
   db.activity_log.insert({
-    event:      'admin_login_success',
-    agent_id:   null,
-    ip_address: req.ip,
-    detail:     `Admin logged in: ${ADMIN_USERNAME}`
+    event: 'admin_login_success', agent_id: null, ip_address: req.ip,
+    detail: `Sub-admin logged in: ${subAdmin.email} (${subAdmin.name})`
   });
-  res.json({ success: true, admin: ADMIN_USERNAME });
+
+  return res.json({ success: true, admin: subAdmin.email, role: 'admin', name: subAdmin.name });
 });
 
 // POST /api/admin/logout
@@ -71,25 +130,121 @@ router.post('/logout', requireAdmin, (req, res) => {
 
 // GET /api/admin/status
 router.get('/status', (req, res) => {
-  res.json({ authenticated: !!req.session?.adminAuthenticated, admin: req.session?.adminUser || null });
+  res.json({
+    authenticated: !!req.session?.adminAuthenticated,
+    admin: req.session?.adminUser || null,
+    role:  req.session?.adminRole || null
+  });
+});
+
+// ─── Sub-Admin Management (superadmin only) ───────────────────────────────────
+
+// GET /api/admin/sub-admins — list all sub-admins
+router.get('/sub-admins', requireSuperAdmin, (req, res) => {
+  const list = db.sub_admins.all().map(a => ({
+    id:         a.id,
+    name:       a.name,
+    email:      a.email,
+    active:     a.active,
+    created_at: a.created_at,
+    last_login: a.last_login || null
+  }));
+  res.json({ sub_admins: list, total: list.length });
+});
+
+// POST /api/admin/sub-admins — create a new sub-admin
+router.post('/sub-admins', requireSuperAdmin, (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ error: 'name, email, and password are all required.' });
+  }
+
+  // Email must not already be the super-admin
+  if (email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(400).json({ error: 'That email is reserved for the super-admin.' });
+  }
+
+  // Check for duplicates
+  const existing = db.sub_admins.findOne({ email: email.toLowerCase() });
+  if (existing) {
+    return res.status(409).json({ error: 'An admin with that email already exists.' });
+  }
+
+  // Password must be at least 10 chars
+  if (password.length < 10) {
+    return res.status(400).json({ error: 'Password must be at least 10 characters.' });
+  }
+
+  const newAdmin = db.sub_admins.insert({
+    name:          name.trim(),
+    email:         email.toLowerCase().trim(),
+    password_hash: hashPassword(password),
+    active:        true,
+    last_login:    null,
+    created_by:    SUPER_ADMIN_EMAIL
+  });
+
+  db.activity_log.insert({
+    event: 'sub_admin_created', agent_id: null, ip_address: req.ip,
+    detail: `Sub-admin created: ${newAdmin.email} (${newAdmin.name}) by ${SUPER_ADMIN_EMAIL}`
+  });
+
+  res.status(201).json({
+    success: true,
+    sub_admin: { id: newAdmin.id, name: newAdmin.name, email: newAdmin.email, active: newAdmin.active }
+  });
+});
+
+// DELETE /api/admin/sub-admins/:id — remove a sub-admin
+router.delete('/sub-admins/:id', requireSuperAdmin, (req, res) => {
+  const subAdmin = db.sub_admins.findOne({ id: req.params.id });
+  if (!subAdmin) return res.status(404).json({ error: 'Sub-admin not found.' });
+
+  db.sub_admins.update({ id: subAdmin.id }, { active: false });
+
+  db.activity_log.insert({
+    event: 'sub_admin_removed', agent_id: null, ip_address: req.ip,
+    detail: `Sub-admin deactivated: ${subAdmin.email} (${subAdmin.name}) by ${SUPER_ADMIN_EMAIL}`
+  });
+
+  res.json({ success: true });
+});
+
+// PATCH /api/admin/sub-admins/:id/reset-password — reset a sub-admin's password
+router.patch('/sub-admins/:id/reset-password', requireSuperAdmin, (req, res) => {
+  const { new_password } = req.body;
+  if (!new_password || new_password.length < 10) {
+    return res.status(400).json({ error: 'new_password must be at least 10 characters.' });
+  }
+
+  const subAdmin = db.sub_admins.findOne({ id: req.params.id });
+  if (!subAdmin) return res.status(404).json({ error: 'Sub-admin not found.' });
+
+  db.sub_admins.update({ id: subAdmin.id }, { password_hash: hashPassword(new_password) });
+
+  db.activity_log.insert({
+    event: 'sub_admin_password_reset', agent_id: null, ip_address: req.ip,
+    detail: `Password reset for sub-admin: ${subAdmin.email} by ${SUPER_ADMIN_EMAIL}`
+  });
+
+  res.json({ success: true });
 });
 
 // ─── Analytics ────────────────────────────────────────────────────────────────
 
 // GET /api/admin/analytics
-// Comprehensive analytics endpoint for the new admin panel
 router.get('/analytics', requireAdmin, (req, res) => {
   try {
     const allLogs = db.activity_log.all();
     const pageViewLogs = allLogs.filter(l => l.event === 'page_view');
 
-    // Overview stats
-    const now = new Date();
+    const now          = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const startOfWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const startOfWeek  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const today_views = pageViewLogs.filter(l => new Date(l.created_at) >= startOfToday).length;
-    const week_views = pageViewLogs.filter(l => new Date(l.created_at) >= startOfWeek).length;
+    const today_views  = pageViewLogs.filter(l => new Date(l.created_at) >= startOfToday).length;
+    const week_views   = pageViewLogs.filter(l => new Date(l.created_at) >= startOfWeek).length;
     const total_page_views = pageViewLogs.length;
 
     const unique_ips_today = new Set(
@@ -98,31 +253,20 @@ router.get('/analytics', requireAdmin, (req, res) => {
         .map(l => l.ip_address)
     ).size;
 
-    // Hourly breakdown (24 hour)
     const hourly_today = {};
-    for (let h = 0; h < 24; h++) {
-      hourly_today[`${h}:00`] = 0;
-    }
+    for (let h = 0; h < 24; h++) hourly_today[`${h}:00`] = 0;
     pageViewLogs
       .filter(l => new Date(l.created_at) >= startOfToday)
-      .forEach(l => {
-        const hour = new Date(l.created_at).getHours();
-        hourly_today[`${hour}:00`]++;
-      });
+      .forEach(l => { const hour = new Date(l.created_at).getHours(); hourly_today[`${hour}:00`]++; });
 
-    // Top pages (by path)
     const pageStats = {};
     pageViewLogs.forEach(l => {
-      if (l.detail) {
-        pageStats[l.detail] = (pageStats[l.detail] || 0) + 1;
-      }
+      if (l.detail) pageStats[l.detail] = (pageStats[l.detail] || 0) + 1;
     });
     const top_pages = Object.entries(pageStats)
       .map(([page, count]) => ({ page, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+      .sort((a, b) => b.count - a.count).slice(0, 10);
 
-    // Top referrers
     const referrerStats = {};
     pageViewLogs.forEach(l => {
       const ref = l.referrer || 'direct';
@@ -130,38 +274,26 @@ router.get('/analytics', requireAdmin, (req, res) => {
     });
     const top_referrers = Object.entries(referrerStats)
       .map(([ref, count]) => ({ ref, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 10);
+      .sort((a, b) => b.count - a.count).slice(0, 10);
 
-    // User agent breakdown
-    const ua_breakdown = {
-      'Chrome': 0,
-      'Firefox': 0,
-      'Safari': 0,
-      'Bot': 0,
-      'Other': 0
-    };
+    const ua_breakdown = { Chrome: 0, Firefox: 0, Safari: 0, Bot: 0, Other: 0 };
     pageViewLogs.forEach(l => {
       const ua = l.user_agent || '';
-      if (ua.includes('Chrome')) ua_breakdown['Chrome']++;
-      else if (ua.includes('Firefox')) ua_breakdown['Firefox']++;
-      else if (ua.includes('Safari')) ua_breakdown['Safari']++;
-      else if (ua.toLowerCase().includes('bot') || ua.toLowerCase().includes('spider')) ua_breakdown['Bot']++;
-      else ua_breakdown['Other']++;
+      if (ua.includes('Chrome'))                                       ua_breakdown.Chrome++;
+      else if (ua.includes('Firefox'))                                 ua_breakdown.Firefox++;
+      else if (ua.includes('Safari'))                                  ua_breakdown.Safari++;
+      else if (ua.toLowerCase().includes('bot') || ua.toLowerCase().includes('spider')) ua_breakdown.Bot++;
+      else                                                             ua_breakdown.Other++;
     });
 
-    // Articles stats
     const articles = db.articles.all();
     const most_viewed_articles = articles
-      .filter(a => a.views && a.views > 0)
+      .filter(a => a.views > 0)
       .sort((a, b) => (b.views || 0) - (a.views || 0))
       .slice(0, 10)
       .map(a => ({ title: a.title, slug: a.slug, views: a.views || 0 }));
 
-    // Agents stats
     const agents = db.agents.all();
-    const active_agents = agents.filter(a => !a.banned).length;
-    const banned_agents = agents.filter(a => a.banned).length;
 
     res.json({
       overview: {
@@ -175,15 +307,8 @@ router.get('/analytics', requireAdmin, (req, res) => {
       top_pages,
       top_referrers,
       ua_breakdown,
-      articles: {
-        total: articles.length,
-        most_viewed: most_viewed_articles
-      },
-      agents: {
-        total: agents.length,
-        active: active_agents,
-        banned: banned_agents
-      }
+      articles: { total: articles.length, most_viewed: most_viewed_articles },
+      agents:   { total: agents.length, active: agents.filter(a => !a.banned).length, banned: agents.filter(a => a.banned).length }
     });
   } catch (err) {
     console.error('[Analytics Error]', err);
@@ -193,7 +318,6 @@ router.get('/analytics', requireAdmin, (req, res) => {
 
 // ─── Telemetry ────────────────────────────────────────────────────────────────
 
-// GET /api/admin/telemetry
 router.get('/telemetry', requireAdmin, (req, res) => {
   const limit = Number(req.query.limit) || 100;
   const event = req.query.event || null;
@@ -203,13 +327,9 @@ router.get('/telemetry', requireAdmin, (req, res) => {
   log.sort((a,b) => new Date(b.created_at)-new Date(a.created_at));
   log = log.slice(0, limit);
 
-  // Aggregate stats
   const eventCounts = {};
-  db.activity_log.all().forEach(e => {
-    eventCounts[e.event] = (eventCounts[e.event] || 0) + 1;
-  });
+  db.activity_log.all().forEach(e => { eventCounts[e.event] = (eventCounts[e.event] || 0) + 1; });
 
-  // Auth stats
   const authSuccess = db.activity_log.where({ event: 'auth_success' }).length;
   const authFailed  = db.activity_log.where({ event: 'auth_failed' }).length;
 
@@ -236,11 +356,9 @@ router.get('/agents', requireAdmin, (req, res) => {
   res.json({ agents, total: agents.length });
 });
 
-// ─── Rollback ─────────────────────────────────────────────────────────────────
+// ─── Rollback (superadmin only) ───────────────────────────────────────────────
 
-// POST /api/admin/rollback/article/:id
-// Roll back an article to a specific revision_id
-router.post('/rollback/article/:articleId', requireAdmin, (req, res) => {
+router.post('/rollback/article/:articleId', requireSuperAdmin, (req, res) => {
   const { revision_id } = req.body;
   if (!revision_id) return res.status(400).json({ error: 'revision_id is required.' });
 
@@ -250,7 +368,6 @@ router.post('/rollback/article/:articleId', requireAdmin, (req, res) => {
   const rev = db.revisions.findOne({ id: revision_id, article_id: article.id });
   if (!rev) return res.status(404).json({ error: 'Revision not found for this article.' });
 
-  // Create a new revision forking from the target (preserves full history)
   const rollbackRev = db.revisions.insert({
     article_id: article.id,
     agent_id: 'admin-rollback',
@@ -260,13 +377,9 @@ router.post('/rollback/article/:articleId', requireAdmin, (req, res) => {
   });
 
   db.articles.update({ id: article.id }, { current_revision_id: rollbackRev.id });
-
   db.activity_log.insert({
-    event:      'admin_rollback',
-    agent_id:   null,
-    ip_address: req.ip,
-    detail:     `Admin rolled back "${article.title}" to revision ${revision_id}`,
-    article_id: article.id
+    event: 'admin_rollback', agent_id: null, ip_address: req.ip,
+    detail: `Admin rolled back "${article.title}" to revision ${revision_id}`, article_id: article.id
   });
 
   if (global.wsBroadcast) {
@@ -276,16 +389,13 @@ router.post('/rollback/article/:articleId', requireAdmin, (req, res) => {
   res.json({ success: true, new_revision: rollbackRev });
 });
 
-// POST /api/admin/rollback/database
-// Full database restore to a timestamp (marks all articles as of that point)
-router.post('/rollback/database', requireAdmin, (req, res) => {
+router.post('/rollback/database', requireSuperAdmin, (req, res) => {
   const { timestamp } = req.body;
   if (!timestamp) return res.status(400).json({ error: 'timestamp (ISO 8601) is required.' });
 
   const target = new Date(timestamp);
   if (isNaN(target)) return res.status(400).json({ error: 'Invalid timestamp format.' });
 
-  // For each article, find the most recent revision at or before the timestamp
   const articles = db.articles.all();
   let rolledBack = 0;
 
@@ -295,7 +405,6 @@ router.post('/rollback/database', requireAdmin, (req, res) => {
       .sort((a,b) => new Date(b.created_at)-new Date(a.created_at));
 
     if (revs.length > 0 && revs[0].id !== article.current_revision_id) {
-      // Create rollback revision
       const rb = db.revisions.insert({
         article_id: article.id,
         agent_id: 'admin-rollback',
@@ -309,32 +418,25 @@ router.post('/rollback/database', requireAdmin, (req, res) => {
   });
 
   db.activity_log.insert({
-    event:      'admin_db_rollback',
-    agent_id:   null,
-    ip_address: req.ip,
-    detail:     `Global DB rollback to ${timestamp}. ${rolledBack} articles affected.`
+    event: 'admin_db_rollback', agent_id: null, ip_address: req.ip,
+    detail: `Global DB rollback to ${timestamp}. ${rolledBack} articles affected.`
   });
 
   res.json({ success: true, articles_affected: rolledBack, rolled_back_to: timestamp });
 });
 
-// ─── Ban Controls ─────────────────────────────────────────────────────────────
+// ─── Ban Controls (superadmin only) ──────────────────────────────────────────
 
-// POST /api/admin/bans
-router.post('/bans', requireAdmin, (req, res) => {
+router.post('/bans', requireSuperAdmin, (req, res) => {
   const { ip_range, agent_id, reason } = req.body;
   if (!ip_range && !agent_id) return res.status(400).json({ error: 'ip_range or agent_id required.' });
 
   const ban = db.bans.insert({ ip_range, agent_id, reason: reason || 'Banned by admin', lifted: false });
-
-  // Mark agent as banned in agents table
   if (agent_id) db.agents.update({ id: agent_id }, { banned: true });
 
   db.activity_log.insert({
-    event:      'admin_ban',
-    agent_id:   agent_id || null,
-    ip_address: req.ip,
-    detail:     `Ban applied. IP range: ${ip_range || 'N/A'}, Agent: ${agent_id || 'N/A'}. Reason: ${reason}`
+    event: 'admin_ban', agent_id: agent_id || null, ip_address: req.ip,
+    detail: `Ban applied. IP range: ${ip_range || 'N/A'}, Agent: ${agent_id || 'N/A'}. Reason: ${reason}`
   });
 
   if (global.wsBroadcast) {
@@ -344,14 +446,12 @@ router.post('/bans', requireAdmin, (req, res) => {
   res.status(201).json({ ban });
 });
 
-// GET /api/admin/bans
 router.get('/bans', requireAdmin, (req, res) => {
   const bans = db.bans.all();
   res.json({ bans, total: bans.length });
 });
 
-// DELETE /api/admin/bans/:id — lift a ban
-router.delete('/bans/:id', requireAdmin, (req, res) => {
+router.delete('/bans/:id', requireSuperAdmin, (req, res) => {
   const ban = db.bans.findOne({ id: req.params.id });
   if (!ban) return res.status(404).json({ error: 'Ban not found.' });
 
@@ -366,9 +466,9 @@ router.delete('/bans/:id', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-// ─── Article lock/unlock ──────────────────────────────────────────────────────
+// ─── Article lock/unlock (superadmin only) ────────────────────────────────────
 
-router.post('/articles/:id/lock', requireAdmin, (req, res) => {
+router.post('/articles/:id/lock', requireSuperAdmin, (req, res) => {
   const article = db.articles.findOne({ id: req.params.id });
   if (!article) return res.status(404).json({ error: 'Article not found.' });
   db.articles.update({ id: article.id }, { locked: true });
@@ -376,7 +476,7 @@ router.post('/articles/:id/lock', requireAdmin, (req, res) => {
   res.json({ success: true });
 });
 
-router.post('/articles/:id/unlock', requireAdmin, (req, res) => {
+router.post('/articles/:id/unlock', requireSuperAdmin, (req, res) => {
   const article = db.articles.findOne({ id: req.params.id });
   if (!article) return res.status(404).json({ error: 'Article not found.' });
   db.articles.update({ id: article.id }, { locked: false });

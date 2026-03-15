@@ -6,7 +6,8 @@ const A = {
   ws: null,
   wsTimer: null,
   currentView: 'overview',
-  analyticsData: null
+  analyticsData: null,
+  role: null   // 'superadmin' | 'admin'
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -14,7 +15,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   const res  = await fetch('/api/admin/status');
   const data = await res.json();
   if (data.authenticated) {
-    showAdminApp(data.admin);
+    showAdminApp(data.admin, data.role);
   } else {
     showGate();
   }
@@ -28,15 +29,26 @@ function showGate() {
   document.getElementById('admin-app').style.display = 'none';
 }
 
-function showAdminApp(username) {
+function showAdminApp(username, role) {
+  A.role = role || 'admin';
   document.getElementById('admin-login-gate').style.display = 'none';
   const app = document.getElementById('admin-app');
   app.style.display = 'flex';
-  setText('adm-user-badge', '👤 ' + (username || 'admin'));
+
+  // Role badge
+  const roleBadge = A.role === 'superadmin'
+    ? '<span style="color:#f59e0b;font-size:11px;background:rgba(245,158,11,.15);padding:1px 7px;border-radius:4px;margin-left:6px;">SUPER ADMIN</span>'
+    : '<span style="font-size:11px;color:var(--text-muted);background:rgba(255,255,255,.06);padding:1px 7px;border-radius:4px;margin-left:6px;">ADMIN</span>';
+  document.getElementById('adm-user-badge').innerHTML = '👤 ' + esc(username || 'admin') + roleBadge;
+
+  // Show/hide superadmin-only elements
+  document.querySelectorAll('.superadmin-only').forEach(el => {
+    el.style.display = A.role === 'superadmin' ? '' : 'none';
+  });
+
   admView('overview');
   connectAdminWS();
   loadOverview();
-  // Auto-refresh every 30 seconds
   setInterval(loadOverview, 30000);
   setInterval(loadTraffic, 30000);
 }
@@ -57,7 +69,7 @@ async function adminLogin() {
     });
     const data = await res.json();
     if (res.ok && data.success) {
-      showAdminApp(data.admin);
+      showAdminApp(data.admin, data.role);
     } else {
       showMsg(msg, data.error || 'Authentication failed.', 'error');
     }
@@ -84,11 +96,12 @@ function admView(name) {
 
   A.currentView = name;
 
-  if (name === 'overview') loadOverview();
-  if (name === 'traffic')  loadTraffic();
-  if (name === 'articles') loadAdminArticles();
-  if (name === 'agents')   loadAgents();
-  if (name === 'bans')     loadBans();
+  if (name === 'overview')       loadOverview();
+  if (name === 'traffic')        loadTraffic();
+  if (name === 'articles')       loadAdminArticles();
+  if (name === 'agents')         loadAgents();
+  if (name === 'bans')           loadBans();
+  if (name === 'manage-admins')  loadSubAdmins();
 }
 
 // ─── Overview ─────────────────────────────────────────────────────────────────
@@ -533,6 +546,131 @@ function showMsg(el, msg, type) {
   el.textContent = msg;
   el.className   = `auth-message ${type}`;
   el.style.display = 'block';
+}
+
+// ─── Sub-Admin Management ─────────────────────────────────────────────────────
+
+async function loadSubAdmins() {
+  const el = document.getElementById('sub-admins-list');
+  if (!el) return;
+  try {
+    const res  = await fetch('/api/admin/sub-admins');
+    if (res.status === 403) {
+      el.innerHTML = '<div style="color:var(--danger);padding:12px;">Access denied — super-admin only.</div>';
+      return;
+    }
+    const data = await res.json();
+    const list = data.sub_admins || [];
+
+    if (!list.length) {
+      el.innerHTML = '<div style="color:var(--text3);padding:12px;">No admins created yet. Use the form above to add one.</div>';
+      return;
+    }
+
+    el.innerHTML = `
+      <table class="adm-agents-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Last Login</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(a => `
+            <tr>
+              <td style="font-weight:600;">${esc(a.name)}</td>
+              <td>${esc(a.email)}</td>
+              <td style="color:${a.active ? 'var(--success)' : 'var(--danger)'};">
+                ${a.active ? '✅ Active' : '❌ Deactivated'}
+              </td>
+              <td>${fmtTime(a.created_at)}</td>
+              <td>${a.last_login ? fmtTime(a.last_login) : '<span style="color:var(--text3);">Never</span>'}</td>
+              <td style="display:flex;gap:6px;">
+                <button class="btn btn-secondary" style="padding:4px 10px;font-size:12px;"
+                  onclick="resetSubAdminPassword('${a.id}','${esc(a.name)}')">Reset PW</button>
+                ${a.active
+                  ? `<button class="btn btn-danger" style="padding:4px 10px;font-size:12px;"
+                      onclick="removeSubAdmin('${a.id}','${esc(a.name)}')">Remove</button>`
+                  : ''
+                }
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--danger);padding:12px;">Failed to load admins.</div>';
+  }
+}
+
+async function createSubAdmin() {
+  const name  = document.getElementById('sa-name').value.trim();
+  const email = document.getElementById('sa-email').value.trim();
+  const pass  = document.getElementById('sa-password').value;
+  const msg   = document.getElementById('sa-create-msg');
+
+  if (!name || !email || !pass) {
+    showMsg(msg, 'Name, email and password are all required.', 'error'); return;
+  }
+
+  try {
+    const res  = await fetch('/api/admin/sub-admins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, email, password: pass })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      showMsg(msg, `✅ Admin created: ${data.sub_admin.email}`, 'success');
+      document.getElementById('sa-name').value  = '';
+      document.getElementById('sa-email').value = '';
+      document.getElementById('sa-password').value = '';
+      loadSubAdmins();
+    } else {
+      showMsg(msg, data.error || 'Failed to create admin.', 'error');
+    }
+  } catch {
+    showMsg(msg, 'Request failed.', 'error');
+  }
+}
+
+async function removeSubAdmin(id, name) {
+  if (!confirm(`Remove admin "${name}"? They will no longer be able to log in.`)) return;
+  try {
+    const res = await fetch(`/api/admin/sub-admins/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok) {
+      toast(`Admin "${name}" removed.`);
+      loadSubAdmins();
+    } else {
+      toast('Error: ' + (data.error || 'Failed.'));
+    }
+  } catch { toast('Request failed.'); }
+}
+
+async function resetSubAdminPassword(id, name) {
+  const newPass = prompt(`Enter new password for "${name}" (min. 10 characters):`);
+  if (newPass === null) return;
+  if (newPass.length < 10) { toast('Password too short — minimum 10 characters.'); return; }
+
+  try {
+    const res  = await fetch(`/api/admin/sub-admins/${id}/reset-password`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_password: newPass })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      toast(`✅ Password reset for "${name}".`);
+    } else {
+      toast('Error: ' + (data.error || 'Failed.'));
+    }
+  } catch { toast('Request failed.'); }
 }
 
 let _toastTimer;
