@@ -10,7 +10,10 @@ const { WebSocketServer } = require('ws');
 const path     = require('path');
 const crypto   = require('crypto');
 
-// Seed database
+// ── DB must be loaded FIRST — middleware uses it before routes ─────────────────
+const db = require('./db/store');
+
+// Seed database on startup
 require('./db/seed');
 
 const app    = express();
@@ -22,7 +25,11 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'wikipedai-session-' + crypto.randomBytes(16).toString('hex'),
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false, httpOnly: true, maxAge: 8 * 60 * 60 * 1000 }
+  cookie: {
+    secure: false,    // set to true only if behind HTTPS proxy (nginx handles it on IONOS)
+    httpOnly: true,
+    maxAge: 8 * 60 * 60 * 1000  // 8 hours
+  }
 }));
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
@@ -34,23 +41,23 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Page View Tracking Middleware ──────────────────────────────────────────────
+// Logs every real page visit — skips API, uploads, and static asset requests
 app.use((req, res, next) => {
-  // Skip API routes, uploads, and static assets
   if (
     req.path.startsWith('/api/') ||
     req.path.startsWith('/uploads/') ||
-    /\.(css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|map)$/.test(req.path)
+    /\.(css|js|ico|png|jpg|jpeg|gif|svg|woff|woff2|ttf|map|xml|txt)$/.test(req.path)
   ) {
     return next();
   }
 
-  // Log page view
   db.activity_log.insert({
-    event: 'page_view',
+    event:      'page_view',
+    agent_id:   null,
     ip_address: req.ip,
-    detail: req.path,
+    detail:     req.path,
     user_agent: req.get('User-Agent') || 'unknown',
-    referrer: req.get('Referer') || null
+    referrer:   req.get('Referer') || null
   });
 
   next();
@@ -63,9 +70,9 @@ app.use('/api/admin', require('./routes/admin'));
 
 // ── Dynamic Sitemap ───────────────────────────────────────────────────────────
 app.get('/sitemap.xml', (req, res) => {
-  const siteUrl = process.env.SITE_URL || `${req.protocol}://${req.get('host')}`;
-  const articles = db.articles.find();
-  const now = new Date().toISOString();
+  const siteUrl  = process.env.SITE_URL || `${req.protocol}://${req.get('host')}`;
+  const articles = db.articles.all();   // FIX: was db.articles.find() — Table has .all(), not .find()
+  const now      = new Date().toISOString();
 
   const articleUrls = articles.map(a => `
   <url>
@@ -124,40 +131,33 @@ app.use((err, req, res, next) => {
 const wss = new WebSocketServer({ server, path: '/ws/live' });
 const wsClients = new Set();
 
-// Global WebSocket client count for analytics
 global.wsClientCount = 0;
 
-wss.on('connection', (ws, req) => {
+wss.on('connection', (ws) => {
   wsClients.add(ws);
   global.wsClientCount = wsClients.size;
+
   ws.send(JSON.stringify({
-    type: 'welcome',
-    message: 'Connected to WikipeDAI live feed',
+    type:      'welcome',
+    message:   'Connected to WikipeDAI live feed',
     timestamp: new Date().toISOString()
   }));
 
-  ws.on('close', () => {
-    wsClients.delete(ws);
-    global.wsClientCount = wsClients.size;
-  });
-  ws.on('error', () => {
-    wsClients.delete(ws);
-    global.wsClientCount = wsClients.size;
-  });
+  ws.on('close', () => { wsClients.delete(ws); global.wsClientCount = wsClients.size; });
+  ws.on('error', () => { wsClients.delete(ws); global.wsClientCount = wsClients.size; });
 });
 
-// Global broadcast — used by routes
+// Global broadcast used by routes
 global.wsBroadcast = (payload) => {
   const msg = JSON.stringify({ ...payload, timestamp: payload.timestamp || new Date().toISOString() });
   wsClients.forEach(client => {
-    if (client.readyState === 1) { // OPEN
+    if (client.readyState === 1) {
       try { client.send(msg); } catch {}
     }
   });
 };
 
 // Heartbeat: broadcast stats every 10 seconds
-const db = require('./db/store');
 setInterval(() => {
   global.wsBroadcast({
     type: 'heartbeat',
@@ -183,8 +183,8 @@ server.listen(PORT, () => {
   ║  Auth Endpoint:  http://localhost:${PORT}/api/auth/      ║
   ║  Live WebSocket: ws://localhost:${PORT}/ws/live          ║
   ╠══════════════════════════════════════════════════════╣
-  ║  Admin creds:  admin / WikipeDAI-Admin-2025!         ║
-  ║                overseer / Agent-Oversight-9q7x!      ║
+  ║  Super-Admin:  s.hoffmann.marquez@gmail.com          ║
+  ║  Password:     ADMIN_PASSWORD env var                ║
   ╚══════════════════════════════════════════════════════╝
   `);
 });
