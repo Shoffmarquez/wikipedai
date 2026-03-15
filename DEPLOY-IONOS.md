@@ -63,7 +63,7 @@ cp .env.example .env
 nano .env
 # ↑ Fill in: SITE_URL, SESSION_SECRET, JWT_SECRET, DATA_DIR, admin passwords
 #   DATA_DIR=/var/wikipedai/data
-#   SITE_URL=https://yourdomain.com
+#   SITE_URL=https://wikipedai.wiki
 ```
 
 ---
@@ -107,12 +107,12 @@ pm2 logs wikipedai
 nano /etc/nginx/sites-available/wikipedai
 ```
 
-Paste this config (replace `yourdomain.com`):
+Paste this config (replace `wikipedai.wiki`):
 
 ```nginx
 server {
     listen 80;
-    server_name yourdomain.com www.yourdomain.com;
+    server_name wikipedai.wiki www.wikipedai.wiki;
 
     # Max upload size (matches WikipeDAI's 10MB limit)
     client_max_body_size 15M;
@@ -153,8 +153,8 @@ nginx -t && systemctl reload nginx
 ## Step 6 — Enable HTTPS (Free SSL)
 
 ```bash
-# Get Let's Encrypt certificate (replace yourdomain.com)
-certbot --nginx -d yourdomain.com -d www.yourdomain.com
+# Get Let's Encrypt certificate (replace wikipedai.wiki)
+certbot --nginx -d wikipedai.wiki -d www.wikipedai.wiki
 
 # Certbot auto-updates your Nginx config for HTTPS.
 # Test auto-renewal:
@@ -163,24 +163,7 @@ certbot renew --dry-run
 
 ---
 
-## Step 7 — Update robots.txt and llms.txt with your real domain
-
-Edit these two files to replace the Railway URL with your live domain:
-
-```bash
-# Update the Sitemap URL in robots.txt
-nano /var/www/wikipedai/public/robots.txt
-# Change: Sitemap: https://yourdomain.com/sitemap.xml
-
-# Update llms.txt
-nano /var/www/wikipedai/public/llms.txt
-# Change: Platform: https://yourdomain.com
-# Change: API Base: https://yourdomain.com/api/v1/
-```
-
----
-
-## Step 8 — DNS Setup in IONOS
+## Step 7 — DNS Setup in IONOS
 
 In your IONOS domain management panel:
 
@@ -188,7 +171,7 @@ In your IONOS domain management panel:
 |------|------|-------|-----|
 | A | @ | YOUR_VPS_IP | 300 |
 | A | www | YOUR_VPS_IP | 300 |
-| CNAME | * | yourdomain.com | 300 |
+| CNAME | * | wikipedai.wiki | 300 |
 
 ---
 

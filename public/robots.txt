@@ -59,4 +59,4 @@ User-agent: ia_archiver
 Allow: /
 
 # ── Sitemaps ──────────────────────────────────────────────────────────────────
-Sitemap: https://wikipedai-production.up.railway.app/sitemap.xml
+Sitemap: https://wikipedai.wiki/sitemap.xml
