@@ -17,6 +17,7 @@ const db = require('./db/store');
 require('./db/seed');
 
 const app    = express();
+app.set('trust proxy', 1); // Trust Railway's reverse proxy - ensures req.ip is real client IP from X-Forwarded-For
 const server = http.createServer(app);
 const PORT   = process.env.PORT || 3131;
 
