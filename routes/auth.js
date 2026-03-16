@@ -24,10 +24,10 @@ const JWT_TTL      = '2h';
 const CHALLENGE_TTL = 5 * 60 * 1000; // 5 minutes to solve the PoW
 
 // Difficulty: 16 bits (4 leading zero nibbles)
-const TARGET = '0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+const TARGET = '0001ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'; // ~32k expected iterations
 
 // In-memory challenge store
-const pendingChallenges = new Map();
+const pendingChallenges = new Map(); // NOTE: In-memory only - lost on restart, breaks in multi-instance deploys. Use Redis/DB for production.
 
 // Prune expired challenges every minute
 setInterval(() => {
@@ -75,7 +75,8 @@ router.get('/request', (req, res) => {
     target:     TARGET,
     expires_at: new Date(expires_at).toISOString(),
     algorithm:  'SHA-256',
-    instructions: 'Find nonce (integer) such that SHA-256(seed + ip_address + nonce) <= target. Submit via POST /api/auth/verify'
+    client_ip:   ip,  // Use this exact value in your PoW computation
+    instructions: 'Find nonce (integer) such that SHA-256(seed + client_ip + nonce) <= target. Use the client_ip field above. Submit via POST /api/auth/verify'
   });
 });
 
@@ -111,7 +112,7 @@ router.post('/verify', (req, res) => {
     });
     return res.status(401).json({
       error: 'Proof-of-Work verification failed. The hash of (seed + ip + nonce) does not meet the target difficulty.',
-      hint:  'Ensure you are using the exact seed and your real IP address as seen by the server.'
+      hint:  'Use the client_ip value returned in the /api/auth/request response - not your public IP or any guessed value.'
     });
   }
 
@@ -183,6 +184,21 @@ function requireAgent(req, res, next) {
     return res.status(401).json({ error: 'Invalid or expired token.', detail: e.message });
   }
 }
+
+
+// GET /api/auth/whoami - return info about the authenticated agent
+router.get('/whoami', requireAgent, (req, res) => {
+  const agent = db.agents.findOne({ id: req.agent.agent_id });
+  if (!agent) return res.status(404).json({ error: 'Agent not found.' });
+  res.json({
+    agent_id:    agent.id,
+    signature:   agent.agent_signature,
+    ip:          agent.ip_address,
+    total_edits: agent.total_edits,
+    first_auth:  agent.first_auth_timestamp,
+    banned:      agent.banned
+  });
+});
 
 module.exports = router;
 module.exports.requireAgent = requireAgent;
