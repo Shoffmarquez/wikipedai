@@ -21,47 +21,44 @@ const express    = require('express');
 const crypto     = require('crypto');
 const router     = express.Router();
 const db         = require('../db/store');
-const nodemailer = require('nodemailer');
-
-// ─── Email / OTP Setup ────────────────────────────────────────────────────────
+// ─── Email / OTP Setup — Resend (free, no SMTP config needed) ────────────────
 // OTP codes stored in memory: { [email]: { code, expires, attempts } }
 const otpStore = new Map();
 
-function createTransport() {
-  // Configured via env vars on IONOS:
-  //   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
-  if (!process.env.SMTP_PASS) return null; // email not configured
-  return nodemailer.createTransport({
-    host:   process.env.SMTP_HOST || 'smtp.gmail.com',
-    port:   Number(process.env.SMTP_PORT) || 587,
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER || SUPER_ADMIN_EMAIL,
-      pass: process.env.SMTP_PASS
-    }
-  });
-}
-
+// Send OTP via Resend API (https://resend.com — free: 3,000 emails/month)
+// Requires env var: RESEND_API_KEY
 async function sendOTP(email, code) {
-  const transport = createTransport();
-  if (!transport) {
-    // Development fallback — print to server console
-    console.log(`\n[WikipeDAI OTP] Code for ${email}: ${code}  (expires in 10 min)\n`);
+  if (!process.env.RESEND_API_KEY) {
+    // Development fallback — OTP printed to server console
+    console.log(`\n[WikipedAI OTP] Code for ${email}: ${code}  (expires in 10 min)\n`);
     return;
   }
-  await transport.sendMail({
-    from:    process.env.SMTP_FROM || `"WikipeDAI" <${process.env.SMTP_USER}>`,
-    to:      email,
-    subject: `WikipeDAI Admin Login Code: ${code}`,
-    text: `Your WikipeDAI admin login verification code is:\n\n  ${code}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, someone may be attempting to access your admin panel.`,
-    html: `
-      <div style="font-family:monospace;max-width:480px;margin:auto;padding:32px;background:#0a0a0a;color:#e0e0e0;border:1px solid #333;border-radius:8px">
-        <h2 style="color:#7c3aed;margin:0 0 16px">WikipeDAI — Admin Verification</h2>
-        <p>Your one-time login code is:</p>
-        <div style="font-size:2.5em;letter-spacing:0.3em;color:#a78bfa;font-weight:bold;padding:16px;background:#1a1a2e;border-radius:6px;text-align:center">${code}</div>
-        <p style="color:#888;font-size:0.85em;margin-top:16px">Valid for 10 minutes. Do not share this code.</p>
-      </div>`
+
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type':  'application/json'
+    },
+    body: JSON.stringify({
+      from:    'WikipedAI <onboarding@resend.dev>',
+      to:      [email],
+      subject: `WikipedAI Admin Login Code: ${code}`,
+      text:    `Your WikipedAI admin login code is: ${code}\n\nExpires in 10 minutes. Do not share this code.`,
+      html: `
+        <div style="font-family:monospace;max-width:480px;margin:auto;padding:32px;background:#0a0a0a;color:#e0e0e0;border:1px solid #333;border-radius:8px">
+          <h2 style="color:#00d4ff;margin:0 0 16px">WikipedAI — Admin Verification</h2>
+          <p style="margin-bottom:16px;">Your one-time login code is:</p>
+          <div style="font-size:2.5em;letter-spacing:0.4em;color:#00d4ff;font-weight:bold;padding:16px;background:#0c0e14;border:1px solid #333;border-radius:6px;text-align:center">${code}</div>
+          <p style="color:#888;font-size:0.85em;margin-top:20px">Valid for 10 minutes. Do not share this code.<br>If you did not request this, someone may be attempting to access your admin panel.</p>
+        </div>`
+    })
   });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Resend error ${res.status}: ${err}`);
+  }
 }
 
 // ─── Super-Admin Credentials ──────────────────────────────────────────────────

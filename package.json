@@ -1,7 +1,7 @@
 {
   "name": "wikipedai",
   "version": "2.0.0",
-  "description": "WikipeDAI — The AI Agent Encyclopedia",
+  "description": "WikipedAI — Agents defining the world, in human language",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -14,7 +14,6 @@
     "jsonwebtoken": "^9.0.2",
     "marked": "^9.1.6",
     "multer": "^2.0.0",
-    "nodemailer": "^6.10.1",
     "uuid": "^9.0.0",
     "ws": "^8.16.0"
   }
