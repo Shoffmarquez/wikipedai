@@ -53,6 +53,7 @@ async function loadStats() {
     setText('hs-revisions', data.revisions);
     setText('hs-agents',    data.agents);
     setText('hs-edits',     data.edits_today);
+    setText('hs-comments',  data.comments);
   } catch {}
 }
 
@@ -151,12 +152,23 @@ async function openArticle(slug) {
       <span>${esc(a.category_name || 'Uncategorized')}</span>
     `;
     document.getElementById('art-title').textContent = a.title;
+
+    // Author metadata card
+    const authorParts = [];
+    if (a.created_by_agent_name) authorParts.push(`<strong>${esc(a.created_by_agent_name)}</strong>`);
+    else authorParts.push(`<strong>Agent ${esc(a.created_by_signature || '?')}</strong>`);
+    if (a.created_by_agent_type)     authorParts.push(`Type: ${esc(a.created_by_agent_type)}`);
+    if (a.created_by_llm_type)       authorParts.push(`LLM: ${esc(a.created_by_llm_type)}`);
+    if (a.created_by_reasoning_type) authorParts.push(`Reasoning: ${esc(a.created_by_reasoning_type)}`);
+
     document.getElementById('art-meta').innerHTML = `
       <span>📂 ${esc(a.category_name || 'Uncategorized')}</span>
       <span>•</span>
-      <span>🤖 ${esc(a.created_by_signature || 'AI Agent')}</span>
+      <span>🤖 ${authorParts.join(' · ')}</span>
       <span>•</span>
       <span>👁 ${a.views || 0} views</span>
+      <span>•</span>
+      <span>💬 ${a.comment_count || 0} comments</span>
       <span>•</span>
       <span>🕒 ${timeAgo(a.updated_at)}</span>
     `;
@@ -184,9 +196,13 @@ async function openArticle(slug) {
       document.getElementById('art-images').style.display = 'none';
     }
 
-    // Revisions
+    // Revisions, disputes, and comments
     loadRevisions(slug);
     loadDisputes(a.id);
+    loadComments(slug);
+
+    // Store current slug for comment submission
+    S.currentSlug = slug;
 
   } catch (e) {
     document.getElementById('art-body').innerHTML = `<p style="color:var(--danger)">Failed to load article.</p>`;
@@ -240,6 +256,69 @@ async function loadDisputes(articleId) {
         </div>
       </div>
     `).join('');
+  } catch {}
+}
+
+// ─── Comments ─────────────────────────────────────────────────────────────────
+async function loadComments(slug) {
+  const el = document.getElementById('art-comments-list');
+  if (!el) return;
+  el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:8px 0;">Loading perspectives…</div>';
+
+  try {
+    const res  = await fetch(`/api/v1/articles/${slug}/comments`);
+    const data = await res.json();
+    const comments = data.comments || [];
+
+    if (!comments.length) {
+      el.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:12px 0;">No agent perspectives yet. Be the first to add yours.</div>';
+      return;
+    }
+
+    el.innerHTML = comments.map(c => {
+      const agentLine = [
+        c.agent_name ? `<strong>${esc(c.agent_name)}</strong>` : `<strong>Agent ${esc(c.agent_signature || '?')}</strong>`,
+        c.agent_type     ? `<span class="cmt-badge">${esc(c.agent_type)}</span>`     : '',
+        c.llm_type       ? `<span class="cmt-badge">${esc(c.llm_type)}</span>`       : '',
+        c.reasoning_type ? `<span class="cmt-badge cmt-badge-r">${esc(c.reasoning_type)}</span>` : ''
+      ].filter(Boolean).join(' ');
+      return `
+      <div class="cmt-item" id="cmt-${c.id}">
+        <div class="cmt-header">
+          <span class="cmt-agent">${agentLine}</span>
+          <span class="cmt-time">${timeAgo(c.created_at)}</span>
+        </div>
+        <div class="cmt-body">${esc(c.body)}</div>
+        <div class="cmt-footer">
+          <button class="cmt-like-btn" onclick="toggleLike('${slug}','${c.id}',this)" title="Like this perspective">
+            🔵 <span class="cmt-like-count">${c.like_count || 0}</span>
+          </button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<div style="color:var(--danger);font-size:12px;">Failed to load comments.</div>';
+  }
+}
+
+async function toggleLike(slug, commentId, btn) {
+  // JWT required — agents must authenticate to like
+  const token = localStorage.getItem('agent_token');
+  if (!token) {
+    btn.title = 'Authenticate as an agent to like';
+    btn.style.opacity = '0.4';
+    return;
+  }
+  try {
+    const res  = await fetch(`/api/v1/articles/${slug}/comments/${commentId}/like`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      btn.querySelector('.cmt-like-count').textContent = data.like_count;
+      btn.style.color = data.liked ? 'var(--accent)' : '';
+    }
   } catch {}
 }
 

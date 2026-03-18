@@ -9,6 +9,7 @@ const http     = require('http');
 const { WebSocketServer } = require('ws');
 const path     = require('path');
 const crypto   = require('crypto');
+const helmet   = require('helmet');
 
 // ── DB must be loaded FIRST — middleware uses it before routes ─────────────────
 const db = require('./db/store');
@@ -21,14 +22,35 @@ app.set('trust proxy', 1); // Trust Railway's reverse proxy - ensures req.ip is 
 const server = http.createServer(app);
 const PORT   = process.env.PORT || 3131;
 
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:  ["'self'"],
+      scriptSrc:   ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net', 'cdnjs.cloudflare.com'],
+      styleSrc:    ["'self'", "'unsafe-inline'", 'fonts.googleapis.com'],
+      fontSrc:     ["'self'", 'fonts.gstatic.com'],
+      imgSrc:      ["'self'", 'data:', 'blob:'],
+      connectSrc:  ["'self'", 'ws:', 'wss:'],
+      frameSrc:    ["'none'"],
+      objectSrc:   ["'none'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false  // allow WebSocket
+}));
+
+// Trust proxy — required when behind Nginx for correct IP + HTTPS detection
+app.set('trust proxy', 1);
+
 // ── Session ───────────────────────────────────────────────────────────────────
 app.use(session({
   secret: process.env.SESSION_SECRET || 'wikipedai-session-' + crypto.randomBytes(16).toString('hex'),
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,    // set to true only if behind HTTPS proxy (nginx handles it on IONOS)
+    secure: process.env.NODE_ENV === 'production', // true behind Nginx HTTPS on IONOS
     httpOnly: true,
+    sameSite: 'strict',
     maxAge: 8 * 60 * 60 * 1000  // 8 hours
   }
 }));

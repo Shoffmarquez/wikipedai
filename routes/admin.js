@@ -17,10 +17,52 @@
  * Passwords for sub-admins are stored as PBKDF2-SHA512 hashes (Node crypto).
  */
 
-const express = require('express');
-const crypto  = require('crypto');
-const router  = express.Router();
-const db      = require('../db/store');
+const express    = require('express');
+const crypto     = require('crypto');
+const router     = express.Router();
+const db         = require('../db/store');
+const nodemailer = require('nodemailer');
+
+// ─── Email / OTP Setup ────────────────────────────────────────────────────────
+// OTP codes stored in memory: { [email]: { code, expires, attempts } }
+const otpStore = new Map();
+
+function createTransport() {
+  // Configured via env vars on IONOS:
+  //   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+  if (!process.env.SMTP_PASS) return null; // email not configured
+  return nodemailer.createTransport({
+    host:   process.env.SMTP_HOST || 'smtp.gmail.com',
+    port:   Number(process.env.SMTP_PORT) || 587,
+    secure: false,
+    auth: {
+      user: process.env.SMTP_USER || SUPER_ADMIN_EMAIL,
+      pass: process.env.SMTP_PASS
+    }
+  });
+}
+
+async function sendOTP(email, code) {
+  const transport = createTransport();
+  if (!transport) {
+    // Development fallback — print to server console
+    console.log(`\n[WikipeDAI OTP] Code for ${email}: ${code}  (expires in 10 min)\n`);
+    return;
+  }
+  await transport.sendMail({
+    from:    process.env.SMTP_FROM || `"WikipeDAI" <${process.env.SMTP_USER}>`,
+    to:      email,
+    subject: `WikipeDAI Admin Login Code: ${code}`,
+    text: `Your WikipeDAI admin login verification code is:\n\n  ${code}\n\nThis code expires in 10 minutes.\n\nIf you did not request this, someone may be attempting to access your admin panel.`,
+    html: `
+      <div style="font-family:monospace;max-width:480px;margin:auto;padding:32px;background:#0a0a0a;color:#e0e0e0;border:1px solid #333;border-radius:8px">
+        <h2 style="color:#7c3aed;margin:0 0 16px">WikipeDAI — Admin Verification</h2>
+        <p>Your one-time login code is:</p>
+        <div style="font-size:2.5em;letter-spacing:0.3em;color:#a78bfa;font-weight:bold;padding:16px;background:#1a1a2e;border-radius:6px;text-align:center">${code}</div>
+        <p style="color:#888;font-size:0.85em;margin-top:16px">Valid for 10 minutes. Do not share this code.</p>
+      </div>`
+  });
+}
 
 // ─── Super-Admin Credentials ──────────────────────────────────────────────────
 // ══════════════════════════════════════════════════════════════════════════════
@@ -68,10 +110,10 @@ function requireSuperAdmin(req, res, next) {
 // ─── Login / Logout ───────────────────────────────────────────────────────────
 
 // POST /api/admin/login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { username, password } = req.body;
 
-  // ── 1. Check super-admin (hardcoded) ──
+  // ── 1. Check super-admin (hardcoded) — sends OTP before granting session ──
   if (username === SUPER_ADMIN_EMAIL) {
     if (password !== SUPER_ADMIN_PASSWORD) {
       db.activity_log.insert({
@@ -80,14 +122,25 @@ router.post('/login', (req, res) => {
       });
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
-    req.session.adminAuthenticated = true;
-    req.session.adminUser          = SUPER_ADMIN_EMAIL;
-    req.session.adminRole          = 'superadmin';
+
+    // Generate 6-digit OTP
+    const code    = String(Math.floor(100000 + crypto.randomInt(900000))).padStart(6, '0');
+    const expires = Date.now() + 10 * 60 * 1000; // 10 min
+    otpStore.set(SUPER_ADMIN_EMAIL, { code, expires, attempts: 0 });
+
+    try {
+      await sendOTP(SUPER_ADMIN_EMAIL, code);
+    } catch (e) {
+      console.error('[OTP] Email send failed:', e.message);
+      // Still let through in dev mode with console fallback
+    }
+
     db.activity_log.insert({
-      event: 'admin_login_success', agent_id: null, ip_address: req.ip,
-      detail: `Super-admin logged in: ${SUPER_ADMIN_EMAIL}`
+      event: 'admin_otp_sent', agent_id: null, ip_address: req.ip,
+      detail: `OTP sent to super-admin for login verification`
     });
-    return res.json({ success: true, admin: SUPER_ADMIN_EMAIL, role: 'superadmin' });
+
+    return res.json({ success: false, otp_required: true, message: 'A verification code has been sent to your email address.' });
   }
 
   // ── 2. Check sub-admins table ──
@@ -120,6 +173,48 @@ router.post('/login', (req, res) => {
   });
 
   return res.json({ success: true, admin: subAdmin.email, role: 'admin', name: subAdmin.name });
+});
+
+// POST /api/admin/verify-otp — second factor for superadmin login
+router.post('/verify-otp', (req, res) => {
+  const { code } = req.body;
+  const entry = otpStore.get(SUPER_ADMIN_EMAIL);
+
+  if (!entry) {
+    return res.status(400).json({ error: 'No pending OTP. Please login again.' });
+  }
+  if (Date.now() > entry.expires) {
+    otpStore.delete(SUPER_ADMIN_EMAIL);
+    return res.status(400).json({ error: 'OTP expired. Please login again.' });
+  }
+
+  entry.attempts = (entry.attempts || 0) + 1;
+  if (entry.attempts > 5) {
+    otpStore.delete(SUPER_ADMIN_EMAIL);
+    db.activity_log.insert({
+      event: 'admin_otp_blocked', agent_id: null, ip_address: req.ip,
+      detail: 'OTP brute-force blocked after 5 failed attempts'
+    });
+    return res.status(429).json({ error: 'Too many failed attempts. Please login again.' });
+  }
+
+  if (code !== entry.code) {
+    return res.status(401).json({ error: `Invalid code. ${5 - entry.attempts} attempt(s) remaining.` });
+  }
+
+  // OTP correct — create session
+  otpStore.delete(SUPER_ADMIN_EMAIL);
+  req.session.adminAuthenticated = true;
+  req.session.adminUser          = SUPER_ADMIN_EMAIL;
+  req.session.adminRole          = 'superadmin';
+  req.session.loginTime          = new Date().toISOString();
+
+  db.activity_log.insert({
+    event: 'admin_login_success', agent_id: null, ip_address: req.ip,
+    detail: `Super-admin logged in with OTP: ${SUPER_ADMIN_EMAIL}`
+  });
+
+  return res.json({ success: true, admin: SUPER_ADMIN_EMAIL, role: 'superadmin' });
 });
 
 // POST /api/admin/logout

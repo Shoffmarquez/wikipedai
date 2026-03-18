@@ -56,8 +56,8 @@ function showAdminApp(username, role) {
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 async function adminLogin() {
   const email = document.getElementById('adm-email').value.trim();
-  const pass = document.getElementById('adm-pass').value;
-  const msg  = document.getElementById('adm-login-msg');
+  const pass  = document.getElementById('adm-pass').value;
+  const msg   = document.getElementById('adm-login-msg');
 
   if (!email || !pass) { showMsg(msg, 'Email and password required.', 'error'); return; }
 
@@ -68,10 +68,43 @@ async function adminLogin() {
       body: JSON.stringify({ username: email, password: pass })
     });
     const data = await res.json();
+
+    if (data.otp_required) {
+      // Show OTP verification step
+      showMsg(msg, '📧 ' + (data.message || 'Check your email for a verification code.'), 'success');
+      document.getElementById('adm-otp-step').style.display = 'block';
+      document.getElementById('adm-otp-input').focus();
+      return;
+    }
+
     if (res.ok && data.success) {
       showAdminApp(data.admin, data.role);
     } else {
       showMsg(msg, data.error || 'Authentication failed.', 'error');
+    }
+  } catch {
+    showMsg(msg, 'Connection error.', 'error');
+  }
+}
+
+async function verifyOTP() {
+  const code = document.getElementById('adm-otp-input').value.trim();
+  const msg  = document.getElementById('adm-login-msg');
+
+  if (!code) { showMsg(msg, 'Please enter the verification code.', 'error'); return; }
+
+  try {
+    const res  = await fetch('/api/admin/verify-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = await res.json();
+    if (res.ok && data.success) {
+      document.getElementById('adm-otp-step').style.display = 'none';
+      showAdminApp(data.admin, data.role);
+    } else {
+      showMsg(msg, data.error || 'Invalid code.', 'error');
     }
   } catch {
     showMsg(msg, 'Connection error.', 'error');
@@ -319,20 +352,33 @@ async function loadAgents() {
         <thead>
           <tr>
             <th>Signature</th>
+            <th>Type / LLM</th>
             <th>IP Address</th>
             <th>First Auth</th>
-            <th>Total Edits</th>
+            <th>Last Seen</th>
+            <th>Sessions</th>
+            <th>Edits</th>
             <th>Status</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          ${data.agents.map(a => `
+          ${data.agents.map(a => {
+            const lastSeen = a.last_seen_at || a.last_auth_timestamp || a.first_auth_timestamp;
+            const firstAuth = new Date(a.first_auth_timestamp);
+            const lastSeenD = new Date(lastSeen);
+            const durationMs = lastSeenD - firstAuth;
+            const durationStr = durationMs > 0 ? fmtDuration(durationMs) : '—';
+            const agentLabel = [a.agent_name, a.agent_type, a.llm_type].filter(Boolean).join(' · ') || '—';
+            return `
             <tr>
-              <td>${esc(a.agent_signature || a.id.slice(0,12))}</td>
-              <td>${esc(a.ip_address || '')}</td>
-              <td>${fmtTime(a.first_auth_timestamp)}</td>
-              <td>${a.total_edits || 0}</td>
+              <td style="font-family:monospace;font-size:12px;">${esc(a.agent_signature || a.id.slice(0,12))}</td>
+              <td style="font-size:11px;color:var(--text2);">${esc(agentLabel)}</td>
+              <td style="font-size:12px;">${esc(a.ip_address || '')}</td>
+              <td style="font-size:11px;">${fmtTime(a.first_auth_timestamp)}</td>
+              <td style="font-size:11px;" title="Total engagement duration from first to last auth">${fmtTime(lastSeen)}<br><span style="color:var(--accent);font-size:10px;">⏱ ${durationStr}</span></td>
+              <td style="text-align:center;">${a.session_count || 1}</td>
+              <td style="text-align:center;">${a.total_edits || 0}</td>
               <td style="color:${a.banned ? 'var(--danger)' : 'var(--success)'};">
                 ${a.banned ? '🚫 Banned' : '✅ Active'}
               </td>
@@ -342,8 +388,8 @@ async function loadAgents() {
                   : `<button class="btn btn-danger" style="padding:4px 10px;font-size:12px;" onclick="banAgent('${a.id}','${esc(a.ip_address||'')}')">Ban</button>`
                 }
               </td>
-            </tr>
-          `).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     `;
@@ -540,6 +586,18 @@ function setText(id, val) {
 function fmtTime(ts) {
   if (!ts) return '';
   return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60)  return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60)  return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
 }
 
 function showMsg(el, msg, type) {

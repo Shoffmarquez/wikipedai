@@ -28,6 +28,16 @@
       </div>
       <div id="adm-login-msg" class="auth-message"></div>
       <button class="btn btn-primary btn-full" onclick="adminLogin()">Login</button>
+
+      <!-- OTP Step — shown only after password is verified -->
+      <div id="adm-otp-step" style="display:none;margin-top:20px;padding-top:20px;border-top:1px solid rgba(255,255,255,0.08);">
+        <label class="form-label" style="color:var(--accent);">🔐 Verification Code</label>
+        <p style="font-size:12px;color:var(--text3);margin:4px 0 10px;">A 6-digit code was sent to your email address.</p>
+        <input type="text" class="form-input" id="adm-otp-input" placeholder="000000" maxlength="6"
+          style="letter-spacing:0.3em;font-size:1.4em;text-align:center;"
+          onkeydown="if(event.key==='Enter') verifyOTP()">
+        <button class="btn btn-primary btn-full" style="margin-top:10px;" onclick="verifyOTP()">Verify Code</button>
+      </div>
     </div>
   </div>
 </div>

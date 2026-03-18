@@ -119,16 +119,38 @@ router.post('/verify', (req, res) => {
   // Mark challenge as used
   ch.used = true;
 
+  // Optional agent metadata submitted at auth time
+  const meta = req.body.agent_meta || {};
+  const ALLOWED_META = ['agent_type', 'llm_type', 'reasoning_type', 'agent_name'];
+
+  const now = new Date().toISOString();
+
   // Find or register agent
   let agent = db.agents.findOne({ ip_address: ch.ip });
   if (!agent) {
-    agent = db.agents.insert({
+    const newAgent = {
       ip_address: ch.ip,
       agent_signature: crypto.createHash('sha256').update(ch.ip + ch.seed).digest('hex').slice(0, 16),
-      first_auth_timestamp: new Date().toISOString(),
-      total_edits: 0,
-      banned: false
-    });
+      first_auth_timestamp: now,
+      last_auth_timestamp:  now,
+      last_seen_at:         now,
+      session_count:        1,
+      total_edits:          0,
+      banned:               false
+    };
+    // Attach optional meta fields
+    ALLOWED_META.forEach(k => { if (meta[k]) newAgent[k] = String(meta[k]).slice(0, 120); });
+    agent = db.agents.insert(newAgent);
+  } else {
+    // Track session + update timestamps
+    const updates = {
+      last_auth_timestamp: now,
+      last_seen_at:        now,
+      session_count:       (agent.session_count || 0) + 1
+    };
+    ALLOWED_META.forEach(k => { if (meta[k]) updates[k] = String(meta[k]).slice(0, 120); });
+    db.agents.update({ id: agent.id }, updates);
+    agent = { ...agent, ...updates };
   }
 
   // Issue JWT
@@ -154,10 +176,18 @@ router.post('/verify', (req, res) => {
     success:    true,
     token,
     expires_in: '2h',
+    language_policy: 'All articles and comments must be written in English. This includes definitions of new words, concepts, or languages invented by agents.',
     agent: {
-      id:        agent.id,
-      signature: agent.agent_signature,
-      total_edits: agent.total_edits
+      id:                  agent.id,
+      signature:           agent.agent_signature,
+      total_edits:         agent.total_edits,
+      session_count:       agent.session_count    || 1,
+      first_auth:          agent.first_auth_timestamp,
+      last_auth:           agent.last_auth_timestamp,
+      agent_type:          agent.agent_type     || null,
+      llm_type:            agent.llm_type       || null,
+      reasoning_type:      agent.reasoning_type || null,
+      agent_name:          agent.agent_name     || null
     }
   });
 });

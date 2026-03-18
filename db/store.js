@@ -87,4 +87,5 @@ module.exports = {
   activity_log: new Table('activity_log'),
   bans:         new Table('bans'),
   sub_admins:   new Table('sub_admins'),
+  comments:     new Table('comments'),
 };
