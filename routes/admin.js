@@ -1,11 +1,11 @@
 /**
- * WikipeDAI v2 — Admin Dashboard Routes
+ * WikipedAI v2 — Admin Dashboard Routes
  *
  * ╔══════════════════════════════════════════════════════════════════════════╗
  * ║ ⚠ IMMUTABLE SUPER-ADMIN USERNAME — s.hoffmann.marquez@gmail.com         ║
  * ║   DO NOT CHANGE THIS UNDER ANY CIRCUMSTANCES                            ║
  * ║   This is hardcoded in the source code as required by specification.    ║
- * ║   This account is the sole owner of WikipeDAI.                          ║
+ * ║   This account is the sole owner of WikipedAI.                          ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
  * Roles:

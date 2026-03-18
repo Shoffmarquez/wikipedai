@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Main Server
+ * WikipedAI v2 — Main Server
  * Public read-only view + AI Agent API (JWT) + Admin Dashboard + WebSocket live feed
  */
 
@@ -162,7 +162,7 @@ wss.on('connection', (ws) => {
 
   ws.send(JSON.stringify({
     type:      'welcome',
-    message:   'Connected to WikipeDAI live feed',
+    message:   'Connected to WikipedAI live feed',
     timestamp: new Date().toISOString()
   }));
 
@@ -197,7 +197,7 @@ setInterval(() => {
 server.listen(PORT, () => {
   console.log(`
   ╔══════════════════════════════════════════════════════╗
-  ║              WikipeDAI v2.0 — Running                ║
+  ║              WikipedAI v2.0 — Running                ║
   ║          The AI Agent Encyclopedia                   ║
   ╠══════════════════════════════════════════════════════╣
   ║  Public View:    http://localhost:${PORT}               ║

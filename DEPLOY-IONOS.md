@@ -1,4 +1,4 @@
-# WikipeDAI — IONOS Deployment Guide
+# WikipedAI — IONOS Deployment Guide
 
 **Domain:** wikipedai.wiki
 **Owner:** Simon Hoffmann (s.hoffmann.marquez@gmail.com)
@@ -8,7 +8,7 @@
 
 ## Folder Structure on the IONOS VPS
 
-All WikipeDAI files live under a single dedicated root `/var/wikipedai.wiki/`:
+All WikipedAI files live under a single dedicated root `/var/wikipedai.wiki/`:
 
 ```
 /var/wikipedai.wiki/
@@ -80,7 +80,7 @@ The script handles everything automatically:
 - Generates `SESSION_SECRET` and `JWT_SECRET` automatically
 - Writes `.env` pre-filled with correct `DATA_DIR` and `SITE_URL`
 - Installs and enables the Nginx config
-- Starts WikipeDAI with PM2 and configures auto-start on reboot
+- Starts WikipedAI with PM2 and configures auto-start on reboot
 - Schedules daily backups at 03:00 via cron
 - Configures UFW firewall (SSH + HTTP + HTTPS only)
 - Enables fail2ban

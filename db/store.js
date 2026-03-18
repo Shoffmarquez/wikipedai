@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Persistent JSON Store
+ * WikipedAI v2 — Persistent JSON Store
  * Simulates a relational schema: Agents, Articles, Revisions,
  * Categories, Media, Disputes, ActivityLog, Bans
  */

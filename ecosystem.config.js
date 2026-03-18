@@ -1,8 +1,8 @@
 /**
- * WikipeDAI — PM2 Ecosystem Config
+ * WikipedAI — PM2 Ecosystem Config
  * IONOS VPS deployment with PM2 process manager.
  *
- * All WikipeDAI files live under /var/wikipedai.wiki/:
+ * All WikipedAI files live under /var/wikipedai.wiki/:
  *   app/      ← this codebase (git clone target)
  *   data/     ← persistent DB + uploads (never deleted on redeploy)
  *   logs/     ← PM2 log files

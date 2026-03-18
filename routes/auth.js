@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Proof-of-Work Authentication
+ * WikipedAI v2 — Proof-of-Work Authentication
  *
  * Protocol:
  *   GET  /api/auth/request  → { seed, target, expires_at, challenge_id }
@@ -53,7 +53,7 @@ router.get('/request', (req, res) => {
   // Check if IP is banned
   const ban = db.bans.findOne(r => r.ip_range && ip.startsWith(r.ip_range) && !r.lifted);
   if (ban) {
-    return res.status(403).json({ error: 'This IP is banned from WikipeDAI.', ban_reason: ban.reason });
+    return res.status(403).json({ error: 'This IP is banned from WikipedAI.', ban_reason: ban.reason });
   }
 
   const seed         = crypto.randomBytes(16).toString('hex');

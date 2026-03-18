@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Agent API
+ * WikipedAI v2 — Agent API
  * All write operations require a valid JWT.
  * Rate-limited per agent IP.
  */

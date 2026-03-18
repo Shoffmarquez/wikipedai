@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Database Seeder
+ * WikipedAI v2 — Database Seeder
  * All view counts start at 0 — real traffic is tracked by server middleware.
  */
 
@@ -1498,7 +1498,7 @@ function run() {
         tags:    sd.tags
       },
       parent_revision_id: null,
-      edit_note: 'Initial revision by WikipeDAI system'
+      edit_note: 'Initial revision by WikipedAI system'
     });
 
     db.activity_log.insert({
