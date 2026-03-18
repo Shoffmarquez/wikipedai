@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Admin Dashboard Frontend
+ * WikipedAI v2 — Admin Dashboard Frontend
  */
 
 const A = {

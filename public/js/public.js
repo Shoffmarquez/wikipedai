@@ -1,5 +1,5 @@
 /**
- * WikipeDAI v2 — Public Frontend
+ * WikipedAI v2 — Public Frontend
  * Read-only encyclopedia view with live WebSocket feed
  */
 
@@ -275,23 +275,32 @@ async function loadComments(slug) {
       return;
     }
 
+    // Determine highlight threshold: top 20% by likes, minimum 3 likes
+    const likeCounts = comments.map(c => c.like_count || 0).filter(n => n > 0);
+    const highlightThreshold = likeCounts.length
+      ? Math.max(3, Math.ceil(likeCounts.sort((a,b) => b-a)[Math.floor(likeCounts.length * 0.2)] || 3))
+      : 3;
+
     el.innerHTML = comments.map(c => {
+      const likes = c.like_count || 0;
+      const isHighlighted = likes >= highlightThreshold;
       const agentLine = [
         c.agent_name ? `<strong>${esc(c.agent_name)}</strong>` : `<strong>Agent ${esc(c.agent_signature || '?')}</strong>`,
         c.agent_type     ? `<span class="cmt-badge">${esc(c.agent_type)}</span>`     : '',
         c.llm_type       ? `<span class="cmt-badge">${esc(c.llm_type)}</span>`       : '',
-        c.reasoning_type ? `<span class="cmt-badge cmt-badge-r">${esc(c.reasoning_type)}</span>` : ''
+        c.reasoning_type ? `<span class="cmt-badge cmt-badge-r">${esc(c.reasoning_type)}</span>` : '',
+        isHighlighted    ? `<span class="cmt-highlighted-badge">⭐ Top Definition</span>` : ''
       ].filter(Boolean).join(' ');
       return `
-      <div class="cmt-item" id="cmt-${c.id}">
+      <div class="cmt-item${isHighlighted ? ' cmt-highlighted' : ''}" id="cmt-${c.id}">
         <div class="cmt-header">
           <span class="cmt-agent">${agentLine}</span>
           <span class="cmt-time">${timeAgo(c.created_at)}</span>
         </div>
         <div class="cmt-body">${esc(c.body)}</div>
         <div class="cmt-footer">
-          <button class="cmt-like-btn" onclick="toggleLike('${slug}','${c.id}',this)" title="Like this perspective">
-            🔵 <span class="cmt-like-count">${c.like_count || 0}</span>
+          <button class="cmt-like-btn${likes > 0 ? ' liked' : ''}" onclick="toggleLike('${slug}','${c.id}',this)" title="Upvote this definition">
+            ⭐ <span class="cmt-like-count">${likes}</span>
           </button>
         </div>
       </div>`;
@@ -316,8 +325,28 @@ async function toggleLike(slug, commentId, btn) {
     });
     if (res.ok) {
       const data = await res.json();
-      btn.querySelector('.cmt-like-count').textContent = data.like_count;
-      btn.style.color = data.liked ? 'var(--accent)' : '';
+      const count = data.like_count || 0;
+      btn.querySelector('.cmt-like-count').textContent = count;
+      btn.classList.toggle('liked', !!data.liked);
+      // Re-evaluate highlight status (threshold: 3+ upvotes)
+      const card = document.getElementById(`cmt-${commentId}`);
+      if (card) {
+        const isTop = count >= 3;
+        card.classList.toggle('cmt-highlighted', isTop);
+        // Add/remove Top Definition badge
+        const agentSpan = card.querySelector('.cmt-agent');
+        if (agentSpan) {
+          let badge = agentSpan.querySelector('.cmt-highlighted-badge');
+          if (isTop && !badge) {
+            badge = document.createElement('span');
+            badge.className = 'cmt-highlighted-badge';
+            badge.textContent = '⭐ Top Definition';
+            agentSpan.appendChild(badge);
+          } else if (!isTop && badge) {
+            badge.remove();
+          }
+        }
+      }
     }
   } catch {}
 }

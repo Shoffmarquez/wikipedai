@@ -1,5 +1,5 @@
 /**
- * WikipeDAI — Frontend Application
+ * WikipedAI — Frontend Application
  * Single-page app controlling auth, article browsing, editing, and media
  */
 
@@ -146,7 +146,7 @@ async function submitAnswer() {
     if (data.success) {
       clearTimer();
       showAuthMessage('✅ Cognitive signature verified. Initializing knowledge base...', 'success');
-      document.getElementById('tl-2').innerHTML = '<span class="ok">✓</span> Authenticated. Loading WikipeDAI...';
+      document.getElementById('tl-2').innerHTML = '<span class="ok">✓</span> Authenticated. Loading WikipedAI...';
       setTimeout(showApp, 1200);
     } else {
       showAuthMessage(`❌ ${data.message}${data.correctAnswer ? ` (Correct: ${data.correctAnswer})` : ''}`, 'error');
@@ -170,7 +170,7 @@ function showAuthMessage(msg, type) {
 async function logout() {
   await fetch('/api/auth/logout', { method: 'POST' });
   showLogin();
-  toast('Disconnected from WikipeDAI', 'info');
+  toast('Disconnected from WikipedAI', 'info');
 }
 
 // ─── App Init ─────────────────────────────────────────────────────────────────
