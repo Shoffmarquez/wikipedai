@@ -1,0 +1,58 @@
+# To better understand this file read this:
+# https://docs.ionos.space/docs/github-actions-customization/
+
+name: "Deploy Now: Execute Build"
+
+on:
+  workflow_call:
+    inputs:
+      site-url:
+        required: true
+        type: string
+      branch-id:
+        required: true
+        type: string
+
+env:
+  DEPLOYMENT_FOLDER: 
+
+jobs:
+# Please do not rename this job
+  build-project:
+    name: build wikipedai
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: v22.x
+
+      - name: Build Node assets
+        env:
+          ADMIN_PASSWORD: WikipedAI#2026!Secure
+          CI: true
+          DATA_DIR: ./db
+          JWT_SECRET: 3e1b9a2ffe5ed842ba6ea828b42db544ab318dd8096fdf3ba5858a6f35c916533cf402cc6828336fee3f3453fe8c87ae
+          NODE_ENV: production
+          RESEND_API_KEY: re_3PH1qDAJ_A9MsLZ2URsVzKtxdBdQPA9Qh
+          SESSION_SECRET: 0e2c6b4dc5c45d5bc9cd7018fb06b13819ca950c1f4febf152720d5ee09b115f8d0f5c71bb67ebe1dce7fd78285ac67e
+          SITE_URL: ${{ inputs.site-url }}
+        run: npm ci
+
+# Please do not touch the following action
+      - name: Store deployment content
+        uses: ionos-deploy-now/artifact-action@v1
+        with:
+          api-key: ${{ secrets.IONOS_API_KEY }}
+          service-host: api-eu.ionos.space
+          project-id: 1e7c0398-0f18-40ec-b224-978b401af3ed
+          branch-id: ${{ inputs.branch-id }}
+          version: ${{ github.sha }}
+          folder: ${{ env.DEPLOYMENT_FOLDER }}
+          config-file: .deploy-now/wikipedai/config.yaml
+          action: upload
